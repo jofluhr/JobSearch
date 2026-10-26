@@ -1,79 +1,128 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} – JobSearch{% endblock %}
+{% block style %}
+  .job-head { margin-bottom: 24px; max-width: 60em; }
+  .job-head h1 { margin-bottom: 6px; }
+  .where { font-size: 18px; margin: 0 0 4px; }
+  .badges .badge:first-child { margin-left: 0; }
+  .detail { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; align-items: start; }
+  .detail > div > h2:first-child { margin-top: 0; }
+  .stars { color: var(--ochre); letter-spacing: .05em; margin-right: 6px; }
+  .skills { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 70ch; margin: 16px 0; }
+  .skills h3 { font-size: 14px; margin-bottom: 4px; }
+  .skills ul { margin: 0; padding-left: 18px; }
+  .skills .fits h3 { color: var(--green); }
+  .skills .lacks h3 { color: var(--red); }
+  .description { white-space: pre-wrap; }
+  aside .panel h3 { margin-bottom: 6px; }
+  aside .panel ul { margin: 0; padding-left: 18px; }
+  aside .panel li + li { margin-top: 4px; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+  .facts dt { color: var(--pencil); }
+  .facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .status-choice { display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; margin: 0 0 10px; }
+  .status-choice legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
+  .status-choice label { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; }
+  .status-choice input { accent-color: var(--link); margin: 0; }
+  aside textarea { width: 100%; }
+  .save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+  .notes { margin-top: 12px !important; font-size: 14px; }
+  @media (max-width: 860px) {
+    .detail { grid-template-columns: minmax(0, 1fr); }
+    .detail aside { order: -1; }
+    .skills { grid-template-columns: 1fr; }
+  }
+{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('jobs') }}">← Alle Jobs</a></p>
-<div class="card">
-  <h1 style="margin:0 0 4px;font-size:22px">{{ job.title }}</h1>
-  <div>{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}
-    {%- if job.distance_km is not none %} · {{ job.distance_km|round|int }} km{% endif %}
-    {%- if REMOTE_LABELS.get(job.remote_type) %} · {{ REMOTE_LABELS[job.remote_type] }}{% endif %}</div>
-  <div class="muted">Gefunden {{ job.first_seen }}, zuletzt gesehen {{ job.last_seen }} ·
-    {{ ELIGIBILITY_LABELS[job.eligibility] }}{% if job.ineligible_reason %} ({{ job.ineligible_reason }}){% endif %}
-    {%- if job.is_target_company %} <span class="badge target">Zielunternehmen</span>{% endif %}
-    {%- if job.is_generic %} <span class="badge">Sammelanzeige</span>{% endif %}</div>
-  {% if terms %}<div class="muted">Gefunden über: {{ terms|join(", ") }}</div>{% endif %}
-</div>
+<a class="back" href="{{ url_for('jobs') }}">← Alle Jobs</a>
+<header class="job-head">
+  <h1><span class="{{ 'marked-%d' % score.tier if score and score.tier and not score.sorted_out }}">{{ job.title }}</span></h1>
+  <p class="where">{{ job.company }}{% if job.location %} in {{ job.location }}{% endif %}</p>
+  {% if terms %}<p class="muted">Gefunden über: {{ terms|join(", ") }}</p>{% endif %}
+  {% if job.is_target_company or job.is_generic %}<div class="badges">
+    {%- if job.is_target_company %}<span class="badge target">Zielunternehmen</span>{% endif %}
+    {%- if job.is_generic %} <span class="badge">Sammelanzeige</span>{% endif %}</div>{% endif %}
+</header>
 
-<div class="card">
-  <form method="post" action="{{ url_for('set_status', job_id=job.id) }}">
-    <input type="hidden" name="token" value="{{ token }}">
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">
-      <strong>Status:</strong>
-      {% for value, text in STATUS_LABELS.items() %}
-        <label><input type="radio" name="status" value="{{ value }}" {{ "checked" if job.status == value }}> {{ text }}</label>
-      {% endfor %}
-    </div>
-    <textarea name="note" rows="2" style="width:100%"
-              placeholder="Notiz (optional), zum Beispiel warum der Job (nicht) passt. Fließt in künftige Bewertungen ein."></textarea>
-    <div style="margin-top:8px"><button class="primary">Speichern</button>
-      {% if job.applied_on %}<span class="muted">Beworben am {{ job.applied_on }}</span>{% endif %}</div>
-  </form>
-  {% if notes %}
-  <ul>
-    {% for n in notes %}<li><span class="muted">{{ n.created_at[:10] }}, {{ STATUS_LABELS.get(n.status, n.status) }}:</span> {{ n.note }}</li>{% endfor %}
-  </ul>
+<div class="detail">
+<div>
+  {% if score %}
+  <h2><span class="stars" aria-label="{{ score.tier }} von 3 Sternen">{{ "★" * score.tier }}</span>Bewertung
+    {%- if score.low_confidence %} <span class="badge">geringe Sicherheit</span>{% endif %}
+    {%- if score.sorted_out %} <span class="badge">Von der KI aussortiert</span>{% endif %}</h2>
+  <p class="prose">{{ score.reasoning }}</p>
+  {% if score.matching or score.missing %}
+  <div class="skills">
+    {% if score.matching %}<div class="fits"><h3>Passt</h3><ul>{% for s in score.matching %}<li>{{ s }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if score.missing %}<div class="lacks"><h3>Fehlt</h3><ul>{% for s in score.missing %}<li>{{ s }}</li>{% endfor %}</ul></div>{% endif %}
+  </div>
+  {% endif %}
+  <p class="muted">Bewertet am {{ score.scored_at[:10] }} mit {{ score.model }}</p>
+  {% else %}
+  <h2>Bewertung</h2>
+  <p class="muted">Noch nicht bewertet.</p>
+  {% endif %}
+
+  {% if description %}
+  <h2>Beschreibung</h2>
+  <div class="prose description">{{ description }}</div>
   {% endif %}
 </div>
 
-{% if score %}
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px"><span class="tier">{{ "★" * score.tier }}</span> Bewertung
-    {%- if score.low_confidence %} <span class="badge">geringe Sicherheit</span>{% endif %}
-    {%- if score.sorted_out %} <span class="badge">Von der KI aussortiert</span>{% endif %}</h2>
-  <p>{{ score.reasoning }}</p>
-  {% if score.matching %}<p><strong>Passt:</strong> {{ score.matching|join(", ") }}</p>{% endif %}
-  {% if score.missing %}<p><strong>Fehlt:</strong> {{ score.missing|join(", ") }}</p>{% endif %}
-  <p class="muted">Bewertet {{ score.scored_at[:10] }} mit {{ score.model }}</p>
-</div>
-{% endif %}
+<aside>
+  <div class="panel">
+    <form method="post" action="{{ url_for('set_status', job_id=job.id) }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <fieldset class="status-choice">
+        <legend>Status</legend>
+        {% for value, text in STATUS_LABELS.items() %}
+          <label><input type="radio" name="status" value="{{ value }}" {{ "checked" if job.status == value }}> {{ text }}</label>
+        {% endfor %}
+      </fieldset>
+      <textarea name="note" rows="3" aria-label="Notiz"
+                placeholder="Notiz (optional), zum Beispiel warum der Job (nicht) passt. Fließt in künftige Bewertungen ein."></textarea>
+      <div class="save"><button class="primary">Speichern</button>
+        {% if job.applied_on %}<span class="muted">Beworben am {{ job.applied_on }}</span>{% endif %}</div>
+    </form>
+    {% if notes %}
+    <ul class="notes">
+      {% for n in notes %}<li><span class="muted">{{ n.created_at[:10] }}, {{ STATUS_LABELS.get(n.status, n.status) }}:</span> {{ n.note }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
 
-{% if chain|length > 1 %}
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px">Ausschreibungen dieser Stelle</h2>
-  <ul>
-  {% for item in chain %}
-    <li>{% if item.id == job.id %}<strong>{{ item.first_seen }} bis {{ item.last_seen }} (diese)</strong>
-        {% else %}<a href="{{ url_for('job_detail', job_id=item.id) }}">{{ item.first_seen }} bis {{ item.last_seen }}</a>
-          <span class="muted">{{ STATUS_LABELS[item.status] }}</span>{% endif %}</li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
+  <div class="panel">
+    <dl class="facts">
+      {% if job.distance_km is not none %}<dt>Entfernung</dt><dd>{{ job.distance_km|round|int }} km</dd>{% endif %}
+      {% if REMOTE_LABELS.get(job.remote_type) %}<dt>Arbeitsort</dt><dd>{{ REMOTE_LABELS[job.remote_type] }}</dd>{% endif %}
+      <dt>Reichweite</dt><dd>{{ ELIGIBILITY_LABELS[job.eligibility] }}{% if job.ineligible_reason %} ({{ job.ineligible_reason }}){% endif %}</dd>
+      <dt>Gefunden</dt><dd>{{ job.first_seen }}</dd>
+      <dt>Zuletzt gesehen</dt><dd>{{ job.last_seen }}</dd>
+    </dl>
+  </div>
 
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px">Anzeigen</h2>
-  <ul>
-  {% for p in postings %}
-    <li>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ SOURCE_LABELS[p.source] }}</a>{% else %}{{ SOURCE_LABELS[p.source] }}{% endif %}:
-      {{ p.title }} <span class="muted">({{ p.first_seen }} bis {{ p.last_seen }}{% if p.is_snippet %}, nur Ausschnitt{% endif %})</span></li>
-  {% endfor %}
-  </ul>
-</div>
+  <div class="panel">
+    <h3>Anzeigen</h3>
+    <ul>
+    {% for p in postings %}
+      <li>{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ SOURCE_LABELS[p.source] }}</a>{% else %}{{ SOURCE_LABELS[p.source] }}{% endif %}:
+        {{ p.title }} <span class="muted">({{ p.first_seen }} bis {{ p.last_seen }}{% if p.is_snippet %}, nur Ausschnitt{% endif %})</span></li>
+    {% endfor %}
+    </ul>
+  </div>
 
-{% if description %}
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px">Beschreibung</h2>
-  <div class="description">{{ description }}</div>
+  {% if chain|length > 1 %}
+  <div class="panel">
+    <h3>Ausschreibungen dieser Stelle</h3>
+    <ul>
+    {% for item in chain %}
+      <li>{% if item.id == job.id %}<strong>{{ item.first_seen }} bis {{ item.last_seen }} (diese)</strong>
+          {% else %}<a href="{{ url_for('job_detail', job_id=item.id) }}">{{ item.first_seen }} bis {{ item.last_seen }}</a>
+            <span class="muted">{{ STATUS_LABELS[item.status] }}</span>{% endif %}</li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</aside>
 </div>
-{% endif %}
 {% endblock %}

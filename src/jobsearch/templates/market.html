@@ -1,48 +1,61 @@
 {% extends "base.html" %}
 {% block title %}Markt – JobSearch{% endblock %}
+{% block style %}
+  .market h1 { margin-bottom: 4px; }
+  .market h2 { margin-top: 40px; }
+  .market table { margin-top: 12px; }
+  .market td.num, .market th.num { width: 6.5em; }
+  .market .gap { font-weight: 600; }
+  @media (max-width: 700px) { .market td.num, .market th.num { width: auto; } }
+{% endblock %}
 {% block content %}
+<div class="market">
+<h1>Markt</h1>
+<p class="intro">Welche Firmen gerade einstellen und welche Skills die guten Jobs verlangen.</p>
+
 <h2>Aktive Firmen</h2>
-<p class="muted">Firmen mit {{ MIN_JOBS }} oder mehr Jobs in Reichweite in den letzten {{ WINDOW_DAYS }} Tagen oder einem
+<p class="intro">Firmen mit {{ MIN_JOBS }} oder mehr Jobs in Reichweite in den letzten {{ WINDOW_DAYS }} Tagen oder einem
   Reopening, ohne Sammelanzeigen.</p>
 {% if companies %}
-<table>
-  <tr><th>Firma</th><th style="text-align:right">Jobs</th><th>bestes Tier</th>
-      <th style="text-align:right">Reopenings</th><th></th></tr>
+<div class="scroll"><table>
+  <tr><th>Firma</th><th class="num">Jobs</th><th>bestes Tier</th>
+      <th class="num">Reopenings</th><th class="hide-small">Hinweis</th></tr>
   {% for c in companies %}
   <tr><td>{{ c.name }}{% if c.is_target %}<span class="badge target">Zielunternehmen</span>{% endif %}</td>
-      <td style="text-align:right">{{ c.jobs }}</td>
+      <td class="num">{{ c.jobs }}</td>
       <td class="tier">{{ TIER_LABELS.get(c.best_tier|string, "–") }}</td>
-      <td style="text-align:right">{{ c.reopenings }}</td>
-      <td class="muted">{{ c.note }}</td></tr>
+      <td class="num">{{ c.reopenings }}</td>
+      <td class="muted hide-small">{{ c.note }}</td></tr>
   {% endfor %}
-</table>
+</table></div>
 {% else %}
-<div class="card">Keine aktiven Firmen.</div>
+<p class="empty">Keine aktiven Firmen.</p>
 {% endif %}
 
 <h2>Skill-Gruppen</h2>
-<p class="muted">Aus dem neuesten Fit score aller ★★- und ★★★-Jobs. Je Job zählt eine Gruppe einmal pro Seite; „davon“ bezieht sich auf „fehlt“, „90 T“ heißt
+<p class="intro">Aus dem neuesten Fit score aller ★★- und ★★★-Jobs. Je Job zählt eine Gruppe einmal pro Seite; „davon“ bezieht sich auf „fehlt“, „90 T“ heißt
   die letzten {{ WINDOW_DAYS }} Tage. Eine Gruppe kann auf beiden Seiten stehen, weil verschiedene Anzeigen verschieden
   beurteilt wurden.</p>
 {% if skills %}
-<table>
-  <tr><th>Gruppe</th><th style="text-align:right">fehlt 90 T</th><th style="text-align:right">fehlt</th>
-      <th style="text-align:right">davon positiv</th>
-      <th style="text-align:right" class="hide-small">davon geringe Sicherheit</th>
-      <th style="text-align:right">vorhanden 90 T</th><th style="text-align:right">vorhanden</th></tr>
+<div class="scroll"><table>
+  <tr><th>Gruppe</th><th class="num">fehlt 90 T</th><th class="num hide-small">fehlt</th>
+      <th class="num hide-small">davon positiv</th>
+      <th class="num hide-small">davon geringe Sicherheit</th>
+      <th class="num">vorhanden 90 T</th><th class="num hide-small">vorhanden</th></tr>
   {% for r in skills %}
   <tr><td><a href="{{ url_for('market_group', name=r.group) }}">{{ r.group }}</a></td>
-      <td style="text-align:right">{{ r.missing_recent }}</td><td style="text-align:right">{{ r.missing_total }}</td>
-      <td style="text-align:right">{{ r.positive }}</td>
-      <td style="text-align:right" class="hide-small">{{ r.low_confidence }}</td>
-      <td style="text-align:right">{{ r.matching_recent }}</td><td style="text-align:right">{{ r.matching_total }}</td></tr>
+      <td class="num gap">{{ r.missing_recent }}</td><td class="num hide-small">{{ r.missing_total }}</td>
+      <td class="num hide-small">{{ r.positive }}</td>
+      <td class="num hide-small">{{ r.low_confidence }}</td>
+      <td class="num">{{ r.matching_recent }}</td><td class="num hide-small">{{ r.matching_total }}</td></tr>
   {% endfor %}
-</table>
+</table></div>
 {% else %}
-<div class="card">Noch keine Skill-Gruppen.</div>
+<p class="empty">Noch keine Skill-Gruppen. <code>jobsearch market</code> bildet sie aus den Fit scores.</p>
 {% endif %}
 {% if ungrouped %}
 <p class="muted">{{ ungrouped }} Skill-Text{{ " ist" if ungrouped == 1 else "e sind" }} noch ohne Gruppe.
   <code>jobsearch market</code> gruppiert {{ "ihn" if ungrouped == 1 else "sie" }}.</p>
 {% endif %}
+</div>
 {% endblock %}

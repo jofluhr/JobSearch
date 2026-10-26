@@ -18,3 +18,7 @@ dist/
 # Editors
 .vscode/
 .idea/
+
+# Locally installed agent skills
+.agents/
+skills-lock.json

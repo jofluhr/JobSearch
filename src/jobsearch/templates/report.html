@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% macro evidence(metrics) %}
-<table style="margin-top:8px">
-  <tr><th>Kennzahl</th><th style="text-align:right">Wert</th><th style="text-align:right">n</th></tr>
+<table class="evidence">
+  <tr><th>Kennzahl</th><th class="num">Wert</th><th class="num">n</th></tr>
   {% for m in metrics %}
-  <tr><td>{{ m.label }}</td><td style="text-align:right">{{ m.value }}</td><td style="text-align:right" class="muted">{{ m.n }}</td></tr>
+  <tr><td>{{ m.label }}</td><td class="num">{{ m.value }}</td><td class="num muted">{{ m.n }}</td></tr>
   {% endfor %}
 </table>
 {% endmacro %}
 {% macro decision(r, accept, reject, note="") %}
-<div style="margin-top:8px">
+<div class="decision">
 {% if r.decision == "open" %}
-  <form method="post" action="{{ url_for('decide', rec_id=r.id) }}" style="display:inline">
+  <form method="post" action="{{ url_for('decide', rec_id=r.id) }}">
     <input type="hidden" name="token" value="{{ token }}">
     <button class="primary" name="decision" value="accepted">{{ accept }}</button>
     <button name="decision" value="rejected">{{ reject }}</button>
@@ -24,70 +24,97 @@
 </div>
 {% endmacro %}
 {% block title %}Wochenbericht – JobSearch{% endblock %}
+{% block style %}
+  .report { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 32px; align-items: start; }
+  .week { font-size: 44px; font-weight: 700; letter-spacing: -.02em; line-height: 1; margin-bottom: 8px; }
+  .week small { font-size: 22px; font-weight: 400; color: var(--pencil); letter-spacing: 0; }
+  .evidence { width: auto; min-width: min(100%, 420px); margin: 8px 0; font-size: 14px; }
+  .evidence th, .evidence td { padding: 4px 10px 4px 0; }
+  .rec { display: grid; grid-template-columns: 2em minmax(0, 1fr); gap: 0 8px; padding: 18px 0; border-top: 1px solid var(--rule); }
+  .rec.idea { grid-template-columns: minmax(0, 1fr); }
+  .rec-no { font-size: 22px; font-weight: 700; color: var(--pencil); line-height: 1.1; }
+  .rec h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+  .rec h3 .badge { margin-left: 0; font-weight: 400; }
+  .rec p { max-width: 70ch; }
+  .decision { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+  .decision form { display: flex; gap: 8px; }
+  .decision .badge { margin-left: 0; }
+  .dropped { margin-top: 24px; }
+  .archive ul { list-style: none; margin: 0; padding: 0; }
+  .archive li { padding: 3px 0; }
+  .archive li span { display: block; font-size: 13px; }
+  .archive [aria-current] { font-weight: 600; color: var(--ink); text-decoration: none; }
+  @media (max-width: 860px) { .report { grid-template-columns: minmax(0, 1fr); } }
+{% endblock %}
 {% block content %}
-{% if notice %}<div class="card" style="border-color:var(--warn)"><strong>{{ notice }}</strong></div>{% endif %}
+{% if notice %}<div class="panel notice"><strong>{{ notice }}</strong></div>{% endif %}
+<div class="report">
+<div>
 {% if not report %}
-<div class="card"><p>Noch kein Wochenbericht. Der Daily run erstellt ihn, sobald er fällig ist, oder von Hand mit
-  <code>jobsearch report</code>.</p></div>
+<h1>Wochenbericht</h1>
+<p class="prose">Noch kein Wochenbericht. Der Daily run erstellt ihn, sobald er fällig ist, oder von Hand mit
+  <code>jobsearch report</code>.</p>
 {% else %}
 {% set year, week = report.week %}
-<div class="card">
-  <h1 style="margin:0 0 4px;font-size:22px">Wochenbericht KW {{ week }}/{{ year }}</h1>
-  <div class="muted">Zeitraum {{ report.period_start }} bis {{ report.period_end }}, erstellt
-    {{ report.made }} mit {{ report.model }}.
-    Die Werte kommen aus der Datenbank, die KI hat nur die Kennzahlen genannt.</div>
-</div>
+<h1 class="week">KW {{ week }} <small>{{ year }}</small></h1>
+<p class="muted">Zeitraum {{ report.period_start }} bis {{ report.period_end }}, erstellt
+  {{ report.made }} mit {{ report.model }}.
+  Die Werte kommen aus der Datenbank, die KI hat nur die Kennzahlen genannt.</p>
 
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px">Einschätzung</h2>
-  <p>{{ report.summary }}</p>
-  {% if report.summary_evidence %}{{ evidence(report.summary_evidence) }}{% endif %}
-</div>
+<h2>Einschätzung</h2>
+<p class="prose">{{ report.summary }}</p>
+{% if report.summary_evidence %}{{ evidence(report.summary_evidence) }}{% endif %}
 
 {% set changes = report.recommendations|selectattr("kind", "equalto", "change")|list %}
-<h2 style="font-size:17px">Empfehlungen ({{ changes|length }})</h2>
-{% if not changes %}<div class="card"><p>Keine Änderung nötig.</p></div>{% endif %}
+<h2>Empfehlungen ({{ changes|length }})</h2>
+{% if not changes %}<p>Keine Änderung nötig.</p>{% endif %}
 {% for r in changes %}
-<div class="card">
-  <h3 style="margin:0;font-size:16px">{{ loop.index }}. {{ LEVER_LABELS.get(r.lever, r.lever) }}
-    {%- if r.target %} <code>{{ r.target }}</code>{% endif %}
-    <span class="badge">Sicherheit: {{ r.confidence }}</span></h3>
-  <p>{{ r.action }}</p>
-  {{ evidence(r.evidence) }}
-  {% if r.lever in APPLIED %}
-    {{ decision(r, "übernehmen", "ablehnen",
-                "Steht dann als eigene Zeile in private/" ~ files[r.lever] ~ "; ändern oder rückgängig nur von Hand in der Datei.") }}
-  {% else %}
-    {{ decision(r, "erledigt (von Hand)", "ablehnen") }}
-  {% endif %}
-</div>
+<section class="rec">
+  <div class="rec-no">{{ loop.index }}</div>
+  <div>
+    <h3>{{ LEVER_LABELS.get(r.lever, r.lever) }}
+      {%- if r.target %} <code>{{ r.target }}</code>{% endif %}
+      <span class="badge">Sicherheit: {{ r.confidence }}</span></h3>
+    <p>{{ r.action }}</p>
+    {{ evidence(r.evidence) }}
+    {% if r.lever in APPLIED %}
+      {{ decision(r, "übernehmen", "ablehnen",
+                  "Steht dann als eigene Zeile in private/" ~ files[r.lever] ~ "; ändern oder rückgängig nur von Hand in der Datei.") }}
+    {% else %}
+      {{ decision(r, "erledigt (von Hand)", "ablehnen") }}
+    {% endif %}
+  </div>
+</section>
 {% endfor %}
 
 {% set ideas = report.recommendations|selectattr("kind", "equalto", "new_lever")|list %}
 {% if ideas %}
-<h2 style="font-size:17px">Ideen für neue Stellschrauben</h2>
+<h2>Ideen für neue Stellschrauben</h2>
 {% for r in ideas %}
-<div class="card">
-  <h3 style="margin:0;font-size:16px">{{ r.lever }}</h3>
-  <p>{{ r.action }} {{ r.why }}</p>
-  {{ evidence(r.evidence) }}
-  {{ decision(r, "aufnehmen", "verwerfen", "Aufnehmen merkt die Idee nur vor; eine neue Stellschraube ist eine Änderung im Code.") }}
-</div>
+<section class="rec idea">
+  <div>
+    <h3>{{ r.lever }}</h3>
+    <p>{{ r.action }} {{ r.why }}</p>
+    {{ evidence(r.evidence) }}
+    {{ decision(r, "aufnehmen", "verwerfen", "Aufnehmen merkt die Idee nur vor; eine neue Stellschraube ist eine Änderung im Code.") }}
+  </div>
+</section>
 {% endfor %}
 {% endif %}
 
-<p class="muted">Verworfen: {{ report.counts.dropped }}{% if report.dropped %}
-  <details><summary>Gründe</summary><ul>{% for d in report.dropped %}<li>{{ d }}</li>{% endfor %}</ul></details>{% endif %}</p>
+<div class="muted dropped">Verworfen: {{ report.counts.dropped }}{% if report.dropped %}
+  <details><summary>Gründe</summary><ul>{% for d in report.dropped %}<li>{{ d }}</li>{% endfor %}</ul></details>{% endif %}</div>
 {% endif %}
+</div>
 
 {% if entries|length > 1 %}
-<div class="card">
-  <h2 style="margin-top:0;font-size:17px">Alle Berichte</h2>
+<aside class="panel archive">
+  <h3>Alle Berichte</h3>
   <ul>{% for e in entries %}
-    <li><a href="{{ url_for('report_page', report_id=e.id) }}">KW {{ e.week[1] }}/{{ e.week[0] }}</a>
-      <span class="muted">erstellt {{ e.made }}</span>
-      {%- if report and e.id == report.id %} <span class="muted">(angezeigt)</span>{% endif %}</li>
+    <li><a href="{{ url_for('report_page', report_id=e.id) }}" {{ 'aria-current=page' if report and e.id == report.id }}>KW {{ e.week[1] }}/{{ e.week[0] }}</a>
+      <span class="muted">erstellt {{ e.made }}</span></li>
   {% endfor %}</ul>
-</div>
+</aside>
 {% endif %}
+</div>
 {% endblock %}

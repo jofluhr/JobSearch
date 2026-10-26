@@ -9,6 +9,35 @@
     </select>
   </label>
 {% endmacro %}
+{% block style %}
+  form.filters { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: end; margin-bottom: 20px; }
+  form.filters label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; font-stretch: 87.5%; color: var(--pencil); }
+  .count { margin-left: auto; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; padding-bottom: 4px; }
+  .count small { font-size: 14px; font-weight: 400; color: var(--pencil); }
+  .jobs td:first-child { border-left: 3px solid transparent; }
+  .jobs tr.st-interesting td:first-child { border-left-color: var(--link); }
+  .jobs tr.st-applied td:first-child { border-left-color: var(--green); }
+  .jobs tr.st-not_interesting, .jobs tr.st-rejected { color: var(--pencil); }
+  .jobs tr.st-not_interesting .title, .jobs tr.st-rejected .title { color: var(--pencil); font-weight: 400; }
+  .jobs .tier { width: 4.5em; font-size: 16px; }
+  .title { color: var(--ink); font-weight: 600; text-decoration: none; }
+  .title:hover { text-decoration: underline; }
+  .company { color: var(--pencil); }
+  .jobs select { font-size: 14px; padding: 3px 6px; }
+  .jobs tr.st-interesting select { border-color: var(--link); color: var(--link); }
+  .jobs tr.st-applied select { border-color: var(--green); color: var(--green); }
+  .jobs td.seen { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .jobs thead th { position: sticky; top: 0; background: var(--sheet); }
+  form.filters select, form.filters input { height: 32px; }
+  @media (max-width: 700px) {
+    /* The highlighter carries the tier here, so the star column makes room for the status. */
+    .jobs th:first-child, .jobs td.tier { display: none; }
+    .jobs td:nth-child(2) { border-left: 3px solid transparent; }
+    .jobs tr.st-interesting td:nth-child(2) { border-left-color: var(--link); }
+    .jobs tr.st-applied td:nth-child(2) { border-left-color: var(--green); }
+    .jobs select { max-width: 7em; }
+  }
+{% endblock %}
 {% block content %}
 <form class="filters" method="get">
   {{ choice("tier", "Bewertung", TIER_LABELS, "alle") }}
@@ -18,24 +47,24 @@
   {{ choice("term", "Suchbegriff", terms, "alle") }}
   <label>Gefunden ab<input type="date" name="since" value="{{ chosen.since }}" onchange="this.form.submit()"></label>
   <noscript><button>Filtern</button></noscript>
-  <span class="muted">{{ jobs|length }} Jobs</span>
+  <span class="count">{{ jobs|length }} <small>Jobs</small></span>
 </form>
-<table>
+<div class="scroll"><table class="jobs">
   <thead>
     <tr><th>Bewertung</th><th>Job</th><th>Status</th><th class="hide-small">Suchbegriff</th><th class="hide-small">Ort</th><th class="hide-small">Gefunden</th></tr>
   </thead>
   <tbody>
   {% for job in jobs %}
-    <tr id="job-{{ job.id }}">
-      <td class="tier">{{ "★" * job.tier if job.tier else "–" }}</td>
-      <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.title }}</a>
+    <tr id="job-{{ job.id }}" class="st-{{ job.status }}">
+      <td class="tier" {% if job.tier %}aria-label="{{ job.tier }} von 3 Sternen"{% endif %}>{{ "★" * job.tier if job.tier else "–" }}</td>
+      <td><a class="title{{ ' marked-%d' % job.tier if job.tier and not job.sorted_out }}" href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.title }}</a>
         {%- if job.id > baseline %} <span class="badge new">neu</span>{% endif %}
         {%- if job.is_target_company %} <span class="badge target">Zielunternehmen</span>{% endif %}
         {%- if job.low_confidence %} <span class="badge">geringe Sicherheit</span>{% endif %}
         {%- if job.sorted_out %} <span class="badge">aussortiert</span>{% endif %}
         {%- if job.is_generic %} <span class="badge">Sammelanzeige</span>{% endif %}
         {%- if job.reopening_of %} <span class="badge">wieder ausgeschrieben</span>{% endif %}
-        <br><span class="muted">{{ job.company }}</span></td>
+        <br><span class="company">{{ job.company }}</span></td>
       <td>
         <form method="post" action="{{ url_for('set_status', job_id=job.id) }}">
           <input type="hidden" name="token" value="{{ token }}">
@@ -50,11 +79,11 @@
       </td>
       <td class="hide-small">{{ job_terms.get(job.id, "") }}</td>
       <td class="hide-small">{{ job.location or "" }}</td>
-      <td class="hide-small">{{ job.first_seen }}</td>
+      <td class="hide-small seen">{{ job.first_seen }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="6" class="muted">Keine Jobs gefunden.</td></tr>
+    <tr><td colspan="6" class="empty">Keine Jobs für diese Filter. Lockere einen Filter, um mehr zu sehen.</td></tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 {% endblock %}

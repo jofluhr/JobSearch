@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ group }} – Markt – JobSearch{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('market_page') }}">← Markt</a></p>
-<h2>Skill-Gruppe {{ group }}</h2>
-<p class="muted">Die Texte, die die Bewertung geschrieben hat und die zu dieser Gruppe gehören. Die Zahlen zählen die ★★- und
+<a class="back" href="{{ url_for('market_page') }}">← Markt</a>
+<h1>{{ group }}</h1>
+<p class="intro">Skill-Gruppe. Die Texte, die die Bewertung geschrieben hat und die zu dieser Gruppe gehören. Die Zahlen zählen die ★★- und
   ★★★-Jobs, deren neuester Fit score den Text nennt. Falsch gruppiert? <code>jobsearch market --regroup</code> bildet alle
   Gruppen neu.</p>
 <table>
-  <tr><th>Text</th><th style="text-align:right">fehlt</th><th style="text-align:right">vorhanden</th></tr>
+  <tr><th>Text</th><th class="num">fehlt</th><th class="num">vorhanden</th></tr>
   {% for t in texts %}
-  <tr><td>{{ t.text }}</td><td style="text-align:right">{{ t.missing }}</td>
-      <td style="text-align:right">{{ t.matching }}</td></tr>
+  <tr><td>{{ t.text }}</td><td class="num">{{ t.missing }}</td>
+      <td class="num">{{ t.matching }}</td></tr>
   {% endfor %}
 </table>
 {% endblock %}

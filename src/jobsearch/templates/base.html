@@ -5,47 +5,106 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}JobSearch{% endblock %}</title>
 <style>
+  /* An application folder: a blue cover with register tabs, one white sheet per page,
+     and a highlighter on the Jobs that fit best. Fonts are local only, the dashboard works offline. */
   :root {
-    --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dd;
-    --accent: #2f5d8a; --good: #2e7d4f; --warn: #a15c00; --new: #c0392b;
+    --page: #eef1f0; --sheet: #ffffff; --panel: #f5f7f6; --ink: #1e2933; --pencil: #5d6973; --rule: #d5dbd9;
+    --folder: #24438f; --folder-tab: #3a5bae; --on-folder: #e9eefa;
+    --link: #2747a0; --marker: rgba(247, 222, 70, .9); --marker-soft: rgba(247, 222, 70, .45);
+    --red: #c2362b; --green: #2d7650; --ochre: #94590a;
+    --ui: Bahnschrift, "DIN Alternate", "D-DIN", "Segoe UI", system-ui, sans-serif;
+    --prose: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161615; --card: #20201e; --text: #ececea; --muted: #a0a09a; --line: #34342f;
-      --accent: #8ab4e0; --good: #6cc495; --warn: #e0a85a; --new: #ff7b6b;
+      --page: #12171c; --sheet: #1b2229; --panel: #222a32; --ink: #e3e8ec; --pencil: #9aa6b0; --rule: #313b45;
+      --folder: #1a2b52; --folder-tab: #283c6e; --on-folder: #d5def2;
+      --link: #9db4f0; --marker: rgba(235, 205, 50, .55); --marker-soft: rgba(235, 205, 50, .3);
+      --red: #f07a6c; --green: #6cc495; --ochre: #e0a85a;
+      color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
-  header a { color: var(--text); text-decoration: none; font-weight: 600; }
-  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-  a { color: var(--accent); }
-  table { width: 100%; border-collapse: collapse; background: var(--card); }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 13px; color: var(--muted); font-weight: 600; }
-  .muted { color: var(--muted); }
-  .tier { white-space: nowrap; color: var(--warn); }
-  .badge { display: inline-block; font-size: 12px; padding: 0 6px; border-radius: 4px;
-           border: 1px solid var(--line); color: var(--muted); margin-left: 4px; white-space: nowrap; }
-  .badge.new { border-color: var(--new); color: var(--new); }
-  .badge.target { border-color: var(--good); color: var(--good); }
-  form.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
-  form.filters label { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); }
-  select, input, textarea, button { font: inherit; color: var(--text); background: var(--card);
-                                    border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
-  button { cursor: pointer; }
-  button.primary { background: var(--accent); color: var(--card); border-color: var(--accent); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
-  .description { white-space: pre-wrap; max-height: 32em; overflow: auto; }
-  @media (max-width: 700px) { .hide-small { display: none; } }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 var(--ui); }
+  a { color: var(--link); text-underline-offset: .15em; }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  h1, h2, h3 { font-weight: 600; line-height: 1.2; margin: 0; }
+  h1 { font-size: 30px; letter-spacing: -.01em; }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  h3 { font-size: 16px; }
+  p { margin: 8px 0; }
+  code { font-size: .92em; background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+  .muted { color: var(--pencil); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .prose { font: 16px/1.6 var(--prose); max-width: 70ch; }
+
+  .masthead { background: var(--folder); color: var(--on-folder); }
+  .masthead-inner { max-width: 1180px; margin: 0 auto; padding: 10px 16px 0; display: flex; align-items: flex-end; gap: 24px; }
+  .brand { color: var(--on-folder); text-decoration: none; font-weight: 700; font-size: 17px; padding-bottom: 9px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs a { color: var(--on-folder); text-decoration: none; padding: 7px 16px 8px; border-radius: 6px 6px 0 0;
+            background: var(--folder-tab); }
+  .tabs a:hover { text-decoration: underline; }
+  .tabs a[aria-current] { background: var(--sheet); color: var(--ink); font-weight: 600; }
+  main { max-width: 1180px; margin: 0 auto 40px; padding: 24px 24px 32px; background: var(--sheet);
+         min-height: calc(100vh - 120px); border-radius: 0 0 6px 6px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 13px; font-weight: 600; font-stretch: 87.5%; color: var(--pencil); vertical-align: bottom; }
+  td.num, th.num { text-align: right; }
+  .tier { white-space: nowrap; color: var(--ochre); letter-spacing: .05em; }
+
+  /* The highlighter: a full stroke for ★★★, a light one for ★★. */
+  .marked-3, .marked-2 { box-decoration-break: clone; -webkit-box-decoration-break: clone; padding: 0 .12em; margin: 0 -.12em; }
+  .marked-3 { background: linear-gradient(transparent 50%, var(--marker) 50%, var(--marker) 92%, transparent 92%); }
+  .marked-2 { background: linear-gradient(transparent 62%, var(--marker-soft) 62%, var(--marker-soft) 92%, transparent 92%); }
+
+  .badge { display: inline-block; font-size: 12px; font-stretch: 87.5%; line-height: 18px; padding: 0 6px; border-radius: 3px;
+           border: 1px solid var(--rule); color: var(--pencil); margin-left: 4px; white-space: nowrap; vertical-align: 1px; }
+  .badge.new { border-color: var(--red); color: var(--red); font-weight: 600; }
+  .badge.target { border-color: var(--green); color: var(--green); }
+
+  select, input, textarea, button { font: inherit; color: var(--ink); background: var(--sheet);
+                                    border: 1px solid var(--rule); border-radius: 4px; padding: 5px 8px; }
+  textarea { font-family: var(--prose); line-height: 1.5; }
+  button { cursor: pointer; padding: 6px 14px; }
+  button:hover { border-color: var(--pencil); }
+  button.primary { background: var(--link); color: var(--sheet); border-color: var(--link); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+
+  .back { display: inline-block; margin-bottom: 16px; }
+  .intro { color: var(--pencil); max-width: 80ch; margin-top: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+  .panel > h2:first-child, .panel > h3:first-child { margin-top: 0; }
+  .notice { border-left: 4px solid var(--ochre); }
+  .empty { color: var(--pencil); padding: 24px 0; }
+  .scroll { overflow-x: auto; }
+
+  @media (max-width: 700px) {
+    .hide-small { display: none; }
+    .masthead-inner { gap: 12px; padding: 8px 8px 0; }
+    .brand { display: none; }
+    .tabs a { padding: 7px 12px 8px; }
+    main { padding: 16px; border-radius: 0; }
+    th, td { padding: 8px 6px; }
+    h1 { font-size: 24px; }
+  }
+  {% block style %}{% endblock %}
 </style>
 </head>
 <body>
-<header><a href="{{ url_for('jobs') }}">JobSearch</a>
-  <a href="{{ url_for('report_page') }}" style="font-weight:normal;margin-left:16px">Wochenbericht</a>
-  <a href="{{ url_for('market_page') }}" style="font-weight:normal;margin-left:16px">Markt</a></header>
+{% set tab = {"jobs": "jobs", "job_detail": "jobs", "report_page": "report",
+              "market_page": "market", "market_group": "market"}.get(request.endpoint) %}
+<header class="masthead"><div class="masthead-inner">
+  <a class="brand" href="{{ url_for('jobs') }}">JobSearch</a>
+  <nav class="tabs" aria-label="Bereiche">
+    <a href="{{ url_for('jobs') }}" {{ 'aria-current=page' if tab == "jobs" }}>Jobs</a>
+    <a href="{{ url_for('report_page') }}" {{ 'aria-current=page' if tab == "report" }}>Wochenbericht</a>
+    <a href="{{ url_for('market_page') }}" {{ 'aria-current=page' if tab == "market" }}>Markt</a>
+  </nav>
+</div></header>
 <main>{% block content %}{% endblock %}</main>
 </body>
 </html>
