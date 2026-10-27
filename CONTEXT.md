@@ -52,7 +52,7 @@ _Avoid_: Rating, match, relevance
 
 **Low-confidence score**:
 A Fit score based only on a short snippet because no full description was available. It is shown like any other score, never hidden.
-_Avoid_: Preliminary score
+_Avoid_: Preliminary score. In German output it is "geringe Evidenz".
 
 **Sorted out** ("aussortiert"):
 A ★ Job the AI marked as clearly outside the candidate's field. It stays in the database with its Fit score but is hidden by default until the candidate sets a Job status. In code it is `sorted_out`.

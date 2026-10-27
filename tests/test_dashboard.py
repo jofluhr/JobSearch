@@ -107,7 +107,7 @@ def test_badges(client, conn):
     with conn:
         conn.execute("UPDATE jobs SET is_generic = 1, is_target_company = 1 WHERE id = ?", (generic,))
     html = page(client)
-    assert "geringe Sicherheit" in html
+    assert "geringe Evidenz" in html
     assert "Sammelanzeige" in html
     assert "Zielunternehmen" in html
 

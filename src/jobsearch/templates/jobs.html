@@ -60,7 +60,7 @@
       <td><a class="title{{ ' marked-%d' % job.tier if job.tier and not job.sorted_out }}" href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.title }}</a>
         {%- if job.id > baseline %} <span class="badge new">neu</span>{% endif %}
         {%- if job.is_target_company %} <span class="badge target">Zielunternehmen</span>{% endif %}
-        {%- if job.low_confidence %} <span class="badge">geringe Sicherheit</span>{% endif %}
+        {%- if job.low_confidence %} <span class="badge">geringe Evidenz</span>{% endif %}
         {%- if job.sorted_out %} <span class="badge">aussortiert</span>{% endif %}
         {%- if job.is_generic %} <span class="badge">Sammelanzeige</span>{% endif %}
         {%- if job.reopening_of %} <span class="badge">wieder ausgeschrieben</span>{% endif %}

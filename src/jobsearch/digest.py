@@ -82,7 +82,7 @@ def _facts(job: dict) -> str:
     if job["is_generic"]:
         facts.append("Sammelanzeige")
     if job["low_confidence"]:
-        facts.append("geringe Sicherheit (keine volle Beschreibung)")
+        facts.append("geringe Evidenz (keine volle Beschreibung)")
     return " · ".join(facts)
 
 

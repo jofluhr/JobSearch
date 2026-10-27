@@ -122,7 +122,7 @@ def cmd_score(cfg: Config, conn, limit: int | None = None, warnings: list[str] =
     """Score, write the Digest, show a toast. Returns 1 if the AI step failed."""
     counts = run_scoring(conn, cfg, limit)
     path, report = write_digest(conn, cfg.digests_dir, date.today(), counts, warnings)
-    print(f"Bewertet: {counts.scored} (davon geringe Sicherheit: {counts.low_confidence}, "
+    print(f"Bewertet: {counts.scored} (davon geringe Evidenz: {counts.low_confidence}, "
           f"aussortiert: {counts.sorted_out}), "
           f"remote bestätigt/abgelehnt: {counts.remote_confirmed}/{counts.remote_rejected}, "
           f"zusammengeführt: {counts.merged}, Sammelanzeigen: {counts.generic}, "

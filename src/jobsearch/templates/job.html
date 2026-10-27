@@ -48,7 +48,7 @@
 <div>
   {% if score %}
   <h2><span class="stars" aria-label="{{ score.tier }} von 3 Sternen">{{ "★" * score.tier }}</span>Bewertung
-    {%- if score.low_confidence %} <span class="badge">geringe Sicherheit</span>{% endif %}
+    {%- if score.low_confidence %} <span class="badge">geringe Evidenz</span>{% endif %}
     {%- if score.sorted_out %} <span class="badge">Von der KI aussortiert</span>{% endif %}</h2>
   <p class="prose">{{ score.reasoning }}</p>
   {% if score.matching or score.missing %}

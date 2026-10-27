@@ -300,7 +300,7 @@ def stage_report(conn: sqlite3.Connection, chosen: list[Period]) -> list[str]:
     rows.append(row("Bewertet", lambda m: str(m.scored)))
     rows += [row(f"  {STARS[tier]}", lambda m, t=tier: _share(m.tiers[t], m.scored)) for tier in (3, 2, 1)]
     rows.append(row("    davon aussortiert", lambda m: _share(m.sorted_out, m.tiers[1])))
-    rows.append(row("  geringe Sicherheit", lambda m: _share(m.low_confidence, m.scored)))
+    rows.append(row("  geringe Evidenz", lambda m: _share(m.low_confidence, m.scored)))
     rows.append(row("  Sammelanzeigen", lambda m: _share(m.generic, m.scored)))
     rows.append(row("Eligible, noch unbewertet", lambda m: str(m.unscored)))
     rows.append(row("Indeed-Jobs", lambda m: str(m.indeed_jobs)))

@@ -93,7 +93,7 @@ def _stages(inp: ReportInput, conn: sqlite3.Connection, key: str, name: str, per
     inp.add(f"stage.generic.{key}", s.generic, s.jobs, f"Sammelanzeigen ({name})")
     for tier in (3, 2, 1):
         inp.add(f"stage.tier{tier}.{key}", s.tiers[tier], s.scored, f"Bewertet mit {STARS[tier]} ({name})")
-    inp.add(f"stage.low_confidence.{key}", s.low_confidence, s.scored, f"Geringe Sicherheit ({name})")
+    inp.add(f"stage.low_confidence.{key}", s.low_confidence, s.scored, f"Geringe Evidenz ({name})")
     inp.add(f"stage.sorted_out.{key}", s.sorted_out, s.scored, f"Von der KI aussortiert ({name})")
     inp.add(f"stage.unscored.{key}", s.unscored, s.eligibility["eligible"], f"Eligible, noch unbewertet ({name})")
 

@@ -293,7 +293,7 @@ def skill_report(rows: list[SkillRow], ungrouped: int, period: Period) -> list[s
     lines = [title]
     if rows:
         lines += table(
-            ["fehlt 90 T", "fehlt", "davon positiv", "davon geringe Sicherheit", "vorhanden 90 T", "vorhanden"],
+            ["fehlt 90 T", "fehlt", "davon positiv", "davon geringe Evidenz", "vorhanden 90 T", "vorhanden"],
             [(f"  {r.group}", [str(v) for v in (r.missing_recent, r.missing_total, r.positive, r.low_confidence,
                                                 r.matching_recent, r.matching_total)])
              for r in rows[:TOP_GROUPS]])
