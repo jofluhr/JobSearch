@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 LOOKUP_PER_RUN = 50
 LOOKUP_SIMILAR_TITLE = 0.8  # stricter than matching.SIMILAR_TITLE, since a hit is attached without the AI
-LOOKUP_RADIUS_KM = 15
+LOOKUP_RADIUS_KM = 30
 
 
 @dataclass

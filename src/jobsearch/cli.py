@@ -217,6 +217,10 @@ def cmd_daily(cfg: Config, score: bool, career: str = "auto", *, client=None, as
     mailbox = Mailbox(cfg.imap_host, cfg.imap_user, cfg.imap_password) if cfg.imap_configured else None
     counts = run_daily(conn, cfg, client or BundesagenturClient(), targets, rules, terms, mailbox=mailbox)
     print(json.dumps({k: v for k, v in counts.__dict__.items() if k != "errors"}, ensure_ascii=False))
+    if counts.lookups:
+        print(f"Volltext gesucht: {counts.lookups}, gefunden: {counts.lookup_hits}, "
+              f"schon bekannt: {counts.lookup_known}, verworfen: {counts.lookup_dropped}, "
+              f"fehlgeschlagen: {counts.lookup_failures}")
     for error in counts.errors:
         print(f"Fehler: {error}", file=sys.stderr)
     status = 1 if counts.errors else 0

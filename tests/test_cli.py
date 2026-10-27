@@ -150,3 +150,19 @@ def test_status_counts_each_job_once_by_its_newest_score(cfg, capsys):
                             VALUES (?, ?, 'Passt.', 'ppp', 'claude-test', '2026-10-16T09:00:00')""", (job, tier))
     cmd_status(cfg)
     assert "Fit scores: ★★★ 0, ★★ 0, ★ 1;" in capsys.readouterr().out
+
+
+def test_daily_run_prints_the_full_text_lookup_in_german(cfg, capsys, monkeypatch):
+    from jobsearch import cli
+    from jobsearch.daily import Counts
+
+    monkeypatch.setattr(cli, "run_daily", lambda *args, **kwargs: Counts(
+        lookups=12, lookup_hits=4, lookup_known=1, lookup_dropped=2, lookup_failures=1))
+    cmd_daily(cfg, score=False, career="off", client=RecordingClient(), ask=TermsAi())
+    assert ("Volltext gesucht: 12, gefunden: 4, schon bekannt: 1, verworfen: 2, fehlgeschlagen: 1"
+            in capsys.readouterr().out)
+
+
+def test_daily_run_without_lookups_prints_no_lookup_line(cfg, capsys):
+    cmd_daily(cfg, score=False, career="off", client=RecordingClient(), ask=TermsAi())
+    assert "Volltext gesucht" not in capsys.readouterr().out

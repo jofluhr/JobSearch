@@ -205,7 +205,7 @@ def test_lookup_attaches_a_clear_hit_with_its_full_text(conn, cfg, monkeypatch):
 @pytest.mark.parametrize("hit", [
     posting(1, "Musterplaner Elektrotechnik (m/w/d)"),  # similar, but not close enough
     posting(1, "Musterplaner (m/w/d)", company="Beispiel Anlagenbau GmbH"),
-    posting(1, "Musterplaner (m/w/d)", loc=GOETTINGEN),  # about 30 km away
+    posting(1, "Musterplaner (m/w/d)", loc=GOETTINGEN),  # about 40 km away
 ])
 def test_lookup_drops_a_hit_that_is_not_clear(conn, cfg, monkeypatch, hit):
     client = LookupClient({"Musterplaner (m/w/d)": [hit]})

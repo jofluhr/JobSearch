@@ -1,6 +1,6 @@
 # Issue: Full text for Indeed Jobs from the Bundesagentur
 
-Status: Part 1 built, its "Done when" waits for new alert mails. Implement on branch `implement-indeed-full-text`.
+Status: Parts 1 and 2 built, their "Done when" waits for new alert mails. Implement on branch `implement-indeed-full-text`.
 
 ## Goal
 
@@ -17,7 +17,7 @@ The lookup uses only the BA API, which ADR 0002 already allows. It makes no `cla
 - **Attach directly, only on a clear hit.** The hit becomes a Posting of the Indeed Job without the AI's same-Job decision. Going through the normal path (`attach()` → `pending`) would not help: the BA Job would be merged *into* the Indeed Job, and the Indeed Job would already have been scored on its snippet in the same call. A clear hit therefore needs a stricter rule than the match candidate rule (`SIMILAR_TITLE = 0.5`):
   - same `normalize_company()` key,
   - `title_similarity(title_tokens(...))` at or above a new, stricter threshold (start at 0.8, tune it on live data),
-  - and, when both places are known, at most a small distance apart (start at 15 km). A remote Indeed Job (no place) needs a BA hit with home office.
+  - and, when both places are known, at most a small distance apart (started at 15 km, raised to 30 km by the candidate during Part 2). A remote Indeed Job (no place) needs a BA hit with home office.
   - More than one clear hit: take the one with the highest similarity, then the nearest. Hits below the threshold are dropped and counted, never stored as Jobs of their own.
 - **A BA Posting already in the database is not attached again.** `postings` is unique on `(source, source_id)`. If the hit is already known, it belongs to another Job, and Job matching has already handled that pair. Count it and move on.
 - **Which Indeed Jobs are looked up.** Unscored, snippet-only, Eligibility `eligible` or `unclear`, not a Target company (the Career scan covers those), with a company name. Sponsored results are included as long as they have a company. The plan's idea of skipping Jobs whose snippet already looks like a mismatch is dropped: deciding that would need an AI call, and a BA request costs nothing.

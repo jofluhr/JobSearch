@@ -463,3 +463,29 @@ def test_api_equivalent_per_scored_job_leaves_out_rescored_rows(conn):
     m = usage_metrics(conn, Period("gesamt"))
     assert (m.scored, m.good) == (3, 1)
     assert m.per_scored == pytest.approx(0.10)
+
+
+def add_full_text(conn, job_id, source_id, found_by_lookup, description="Volltext."):
+    raw = json.dumps({"found_by": "lookup"}) if found_by_lookup else None
+    with conn:
+        conn.execute(
+            """INSERT INTO postings (job_id, source, source_id, title, company, description, is_snippet, raw_json,
+                                     first_seen, last_seen)
+               VALUES (?, 'bundesagentur', ?, 'Planer', 'Muster GmbH', ?, 0, ?, '2026-10-15', '2026-10-15')""",
+            (job_id, source_id, description, raw))
+
+
+def test_stage_metrics_tell_indeed_full_texts_from_the_lookup_and_from_elsewhere(conn):
+    by_lookup = add_job(conn, "Planer A", snippet=True, source="indeed")
+    elsewhere = add_job(conn, "Planer B", snippet=True, source="indeed")
+    no_text = add_job(conn, "Planer C", snippet=True, source="indeed")
+    add_job(conn, "Planer D", snippet=True, source="indeed")
+    add_job(conn, "Nur Bundesagentur")
+    add_full_text(conn, by_lookup, "R-1", True)
+    add_full_text(conn, elsewhere, "R-2", False)
+    add_full_text(conn, no_text, "R-3", True, description=None)  # a partner portal offer has no text
+    m = stage_metrics(conn, Period("gesamt"))
+    assert (m.indeed_jobs, m.indeed_full_text_lookup, m.indeed_full_text_other) == (4, 1, 1)
+    report = stage_report(conn, [Period("gesamt")])
+    assert next(line for line in report if "per Lookup" in line).split()[-3:] == ["1", "(25", "%)"]
+    assert next(line for line in report if "anderweitig" in line).split()[-3:] == ["1", "(25", "%)"]

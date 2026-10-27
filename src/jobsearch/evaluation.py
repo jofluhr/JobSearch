@@ -178,6 +178,9 @@ class StageMetrics:
     low_confidence: int = 0
     sorted_out: int = 0  # ★ Jobs the AI sorted out
     unscored: int = 0  # eligible, not scored yet
+    indeed_jobs: int = 0  # Jobs with an alert mail Posting
+    indeed_full_text_lookup: int = 0  # ... with a full text the full-text lookup found
+    indeed_full_text_other: int = 0  # ... with a full text found otherwise, by a Search term or a Career scan
 
     @property
     def scored(self) -> int:
@@ -218,6 +221,15 @@ def stage_metrics(conn: sqlite3.Connection, period: Period) -> StageMetrics:
             m.sorted_out += r["sorted_out"]
         elif r["eligibility"] == "eligible":
             m.unscored += 1
+    for r in conn.execute(
+        f"""SELECT max(p.id IS NOT NULL) AS full_text,
+                   max(coalesce(json_extract(p.raw_json, '$.found_by'), '') = 'lookup') AS lookup
+            FROM jobs j LEFT JOIN postings p ON p.job_id = j.id AND p.is_snippet = 0 AND p.description IS NOT NULL
+            WHERE {cond} AND EXISTS (SELECT 1 FROM postings i WHERE i.job_id = j.id AND i.source = 'indeed')
+            GROUP BY j.id""", params):
+        m.indeed_jobs += 1
+        m.indeed_full_text_lookup += r["lookup"]
+        m.indeed_full_text_other += r["full_text"] and not r["lookup"]
     return m
 
 
@@ -291,6 +303,9 @@ def stage_report(conn: sqlite3.Connection, chosen: list[Period]) -> list[str]:
     rows.append(row("  geringe Sicherheit", lambda m: _share(m.low_confidence, m.scored)))
     rows.append(row("  Sammelanzeigen", lambda m: _share(m.generic, m.scored)))
     rows.append(row("Eligible, noch unbewertet", lambda m: str(m.unscored)))
+    rows.append(row("Indeed-Jobs", lambda m: str(m.indeed_jobs)))
+    rows.append(row("  Volltext per Lookup", lambda m: _share(m.indeed_full_text_lookup, m.indeed_jobs)))
+    rows.append(row("  Volltext anderweitig", lambda m: _share(m.indeed_full_text_other, m.indeed_jobs)))
     lines = ["Kennzahlen je Stufe (Jobs und Postings nach dem Tag, an dem sie zuerst gesehen wurden):"]
     lines += table([p.label for p in chosen], rows)
     for period in chosen:
