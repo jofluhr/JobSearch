@@ -1,6 +1,6 @@
 # Issue: Full text for Indeed Jobs from the Bundesagentur
 
-Status: all parts built, Part 3 done; the "Done when" of Parts 1 and 2 waits for new alert mails. Implement on branch `implement-indeed-full-text`.
+Status: all parts built; the "Done when" of Parts 1 and 2 checked on a copy of the database with the existing alert mail Jobs (see the plan's Progress). Implement on branch `implement-indeed-full-text`.
 
 ## Goal
 
