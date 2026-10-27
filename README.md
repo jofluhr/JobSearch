@@ -36,6 +36,7 @@ flowchart LR
     ST --> BA
     BA --> DD
     IM --> DD
+    IM -. full-text lookup .-> BA
     CP --> HS --> EX --> DD
     DD --> EL --> DB
     EL -- eligible / remote candidate --> CS --> SC --> DB
@@ -65,7 +66,7 @@ flowchart LR
 - **Extracted Postings must be on the page.** Career page text is untrusted, and the extraction model can invent. Every title and link it returns must appear in the page text it was given; the rest is dropped, logged and counted in the career summary ("verworfen (nicht im Seitentext)").
 - **Third-party text is data, not instructions.** Job ads, career pages and fetched web pages can address the model. The prompts keep that text in JSON and say it is data; the model flags text that tries to steer it (`injection_suspected`, a warning in the Digest, the Job is scored as usual). Links are limited in code, whatever the model answers: only http(s) links are stored, and nothing is fetched from local addresses, redirects included. `jobsearch check-injection` measures this with synthetic injected ads.
 - **AI failure never blocks collection.** If scoring fails, the run still counts as collected, the Jobs wait as unscored, and the error is stored with the run.
-- **Uncertainty is shown, not hidden.** Jobs scored from a short mail snippet are marked low confidence. Rule decisions store their reason, so wrong filters can be found.
+- **Uncertainty is shown, not hidden.** Jobs scored from a short mail snippet are marked low confidence ("geringe Evidenz"). Before scoring, the Daily run looks for the same opening at the Bundesagentur (same company, very similar title, near the same place) and scores on its full text when it finds one. Rule decisions store their reason, so wrong filters can be found.
 - **Human in the loop.** The candidate sets a Job status with an optional Feedback note in the dashboard, and recent notes go into the next scoring prompt.
 - **AI usage is measured.** Every `claude -p` call, retries included, is stored with its purpose, tokens and API equivalent (the list price the call would cost through the API). `status` and the Digest show a line, `jobsearch eval --usage` the details and the API equivalent per scored Job, per ★★★/★★ Job and per career page. It is neither a real cost nor a share of the subscription quota, whose limit is not published in tokens and which also covers interactive use.
 - **Tests never call the AI.** `ai.py` is the only module that runs `claude -p`, and tests replace it with a fake.
@@ -140,5 +141,7 @@ The career scan reads `private/companies.csv`. `career-setup` fills in missing c
 - Distances are straight-line from home. Within `RADIUS_KM` is in reach, and within `RADIUS_TARGET_COMPANY_KM` for Target companies.
 - A title containing a word from the exclusion list is out.
 - Jobs outside the radius are only kept when the posting allows home office *and* the description contains a full-remote phrase ("100% remote", "ortsunabhängig", ...). Those stay `unclear` until the AI scoring confirms them.
+- An alert mail Job whose place is only a country came in through the alert's remote filter and counts as remote. Without a full text it is kept on that filter (a snippet rarely names a remote phrase), and the AI drops it only when it finds the ad hybrid or on-site.
+- An alert mail Job whose place cannot be located (a region, for example) stays `unclear` unless the full-text lookup finds it at the Bundesagentur; then it takes that place and is decided again.
 
 Every decision is stored with its reason, including the ineligible ones.

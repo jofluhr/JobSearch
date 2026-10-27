@@ -50,6 +50,10 @@ _Avoid_: Junk, spam
 The AI's judgment of how well an eligible Job matches the Profile, in three tiers (★★★, ★★, ★).
 _Avoid_: Rating, match, relevance
 
+**Full-text lookup**:
+The Daily run's search at the Bundesagentur for the same opening as a snippet-only Indeed Job, so it is scored on a full text. A clear hit becomes another Posting of the Job without the AI's same-Job decision.
+_Avoid_: Enrichment, backfill. In German output it is "Volltextsuche" ("Volltext gesucht", "Volltext per Lookup").
+
 **Low-confidence score**:
 A Fit score based only on a short snippet because no full description was available. It is shown like any other score, never hidden.
 _Avoid_: Preliminary score. In German output it is "geringe Evidenz".

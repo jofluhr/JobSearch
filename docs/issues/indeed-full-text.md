@@ -1,6 +1,6 @@
 # Issue: Full text for Indeed Jobs from the Bundesagentur
 
-Status: all parts built; the "Done when" of Parts 1 and 2 checked on a copy of the database with the existing alert mail Jobs (see the plan's Progress). Implement on branch `implement-indeed-full-text`.
+Status: done (2026-10-27), merged into `main`. The "Done when" of Parts 1 and 2 was checked on a copy of the database with the existing alert mail Jobs; still open: the hit rate with new alert mails in the live database. Implement on branch `implement-indeed-full-text`.
 
 ## Goal
 
@@ -68,4 +68,4 @@ The German label says the model was unsure, but the flag only means the score re
 
 - **Already scored Indeed Jobs.** A one-off backfill could look up existing snippet-only Jobs, attach hits, and rescore those Jobs with `jobsearch rescore`. `rescore` currently picks Jobs by an older prompt hash, so it would need a second selection.
 - **Career page lookup** for companies that are not Target companies, through Playwright and the existing extraction prompt. Costs AI calls, so only for Jobs already scored ★★★ or ★★.
-- **CONTEXT.md**: if the lookup becomes a term used in conversation, add it (for example "Full-text lookup", German "Volltextsuche").
+- ~~**CONTEXT.md**: add "Full-text lookup"~~: done at the merge, since the CLI and `eval` name it.
