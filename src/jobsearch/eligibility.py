@@ -8,6 +8,10 @@ from dataclasses import dataclass
 
 HOMEOFFICE_REASON = "Homeoffice möglich, ob vollständig remote ist offen"
 NOT_FULLY_REMOTE_REASON = "Homeoffice möglich, laut Beschreibung nicht vollständig remote"
+UNKNOWN_PLACE_REASON = "Ort unbekannt"
+# The hint for a remote alert mail Job without a full text: its snippet rarely says "fully remote",
+# but it came in through the alert's remote filter, so it counts as remote until the AI says otherwise.
+INDEED_REMOTE_HINT = "Remote-Filter des Indeed-Alerts"
 
 # Phrases that suggest fully remote work. A home office flag alone usually means hybrid.
 _REMOTE_HINTS = re.compile(
@@ -67,7 +71,7 @@ def decide(
         # Hybrid outside the radius is out, fully remote is in. Only the description tells which.
         return Decision("unclear", HOMEOFFICE_REASON)
     if distance is None:
-        return Decision("unclear", "Ort unbekannt")
+        return Decision("unclear", UNKNOWN_PLACE_REASON)
     return Decision("ineligible", f"Entfernung {distance:.0f} km")
 
 
@@ -75,6 +79,11 @@ def remote_hint(description: str) -> str | None:
     """The first phrase in a description that suggests fully remote work."""
     match = _REMOTE_HINTS.search(description)
     return match.group(0) if match else None
+
+
+def remote_by_alert_filter() -> Decision:
+    """A remote alert mail Job without a full text, kept for the AI like one with a remote phrase."""
+    return Decision("unclear", f"{HOMEOFFICE_REASON} (Hinweis: '{INDEED_REMOTE_HINT}')")
 
 
 def settle_remote(description: str) -> Decision:

@@ -1,11 +1,16 @@
 import json
 from datetime import date
 
-from jobsearch import prompts
+import pytest
+
+from jobsearch import daily, prompts
 from jobsearch.companies import TargetCompany, normalize_company
 from jobsearch.daily import remote_window_days, run_daily
-from jobsearch.eligibility import Rules
+from jobsearch.eligibility import INDEED_REMOTE_HINT, Rules
 from jobsearch.sources import Location, Posting
+from jobsearch.sources.indeed_mail import Mailbox
+
+from .test_indeed_mail import INDEED, FakeImap
 
 RULES = Rules(30, 70, ("Werkstudent",))
 TARGETS = [TargetCompany("Example Tech AG", (normalize_company("Example Tech"),), "Kassel", "", "", "")]
@@ -150,3 +155,141 @@ def test_a_posting_with_a_script_link_is_kept_without_the_link(conn, cfg):
     run_daily(conn, cfg, FakeClient(radius=[bad], nationwide=[]), TARGETS, RULES, ["Gärtner"],
               today=date(2026, 10, 15))
     assert [tuple(r) for r in conn.execute("SELECT title, url FROM postings")] == [("Landschaftsgärtner", None)]
+
+
+# Full-text lookup for Indeed Jobs
+
+class LookupClient(FakeClient):
+    """Finds nothing by Search term. A lookup returns the BA Postings given for the looked-up title."""
+
+    def __init__(self, hits=None, descriptions=None):
+        super().__init__(radius=[], nationwide=[], descriptions=descriptions)
+        self.hits = hits or {}
+        self.lookups = []
+
+    def lookup(self, title, *, location=None, radius_km=None):
+        self.lookups.append((title, location))
+        return list(self.hits.get(title, []))
+
+
+def indeed(n, title, company="Muster Industrie GmbH", loc=KASSEL):
+    return Posting("indeed", f"jk-{n}", title, company, url=f"https://indeed.example/viewjob?jk={n}",
+                   locations=[loc] if loc else [], homeoffice_possible=loc is None,
+                   description="Kurzer Ausschnitt.", is_snippet=True)
+
+
+def run_with_mail(conn, cfg, client, monkeypatch, postings, today=date(2026, 10, 16)):
+    monkeypatch.setattr(daily, "parse_alert", lambda message: postings)
+    mailbox = Mailbox("imap.example.org", "u", "p", imap_factory=FakeImap({b"1": INDEED}))
+    return run_daily(conn, cfg, client, TARGETS, RULES, [], today=today, mailbox=mailbox)
+
+
+def postings_of(conn, title):
+    return [tuple(r) for r in conn.execute(
+        """SELECT p.source, p.source_id, p.description FROM postings p JOIN jobs j ON j.id = p.job_id
+           WHERE j.title = ? ORDER BY p.source, p.source_id""", (title,))]
+
+
+def test_lookup_attaches_a_clear_hit_with_its_full_text(conn, cfg, monkeypatch):
+    client = LookupClient({"Musterplaner (m/w/d)": [posting(1, "Musterplaner (m/w/d)", company="Muster Industrie")]},
+                          descriptions={"ID-1": "Volltext der Anzeige."})
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
+    assert postings_of(conn, "Musterplaner (m/w/d)") == [
+        ("bundesagentur", "ID-1", "Volltext der Anzeige."), ("indeed", "jk-1", "Kurzer Ausschnitt.")]
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+    raw = json.loads(conn.execute("SELECT raw_json FROM postings WHERE source = 'bundesagentur'").fetchone()[0])
+    assert raw["found_by"] == "lookup"
+    assert conn.execute("SELECT count(*) FROM posting_terms").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("hit", [
+    posting(1, "Musterplaner Elektrotechnik (m/w/d)"),  # similar, but not close enough
+    posting(1, "Musterplaner (m/w/d)", company="Beispiel Anlagenbau GmbH"),
+    posting(1, "Musterplaner (m/w/d)", loc=GOETTINGEN),  # about 30 km away
+])
+def test_lookup_drops_a_hit_that_is_not_clear(conn, cfg, monkeypatch, hit):
+    client = LookupClient({"Musterplaner (m/w/d)": [hit]})
+    counts = run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
+    assert postings_of(conn, "Musterplaner (m/w/d)") == [("indeed", "jk-1", "Kurzer Ausschnitt.")]
+    assert conn.execute("SELECT count(*) FROM postings WHERE source = 'bundesagentur'").fetchone()[0] == 0
+    assert (counts.lookups, counts.lookup_hits) == (1, 0)
+    assert counts.lookup_dropped == (hit.company == "Muster Industrie GmbH")
+    assert client.description_calls == []
+
+
+def test_lookup_takes_the_most_similar_then_the_nearest_hit(conn, cfg, monkeypatch):
+    near = Location("34119 Kassel", 51.318, 9.47)
+    client = LookupClient({"Musterplaner (m/w/d)": [
+        posting(1, "Musterplaner (m/w/d)", loc=Location("34233 Fuldatal", 51.37, 9.53)),
+        posting(2, "Musterplaner (m/w/d)", loc=near),
+    ]})
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
+    assert [p[1] for p in postings_of(conn, "Musterplaner (m/w/d)")] == ["ID-2", "jk-1"]
+
+
+def test_lookup_skips_a_hit_already_in_the_database(conn, cfg, monkeypatch):
+    known = posting(1, "Musterplaner (m/w/d)")
+    run_daily(conn, cfg, FakeClient([known], []), TARGETS, RULES, ["Ingenieur"], today=date(2026, 10, 15))
+    client = LookupClient({"Musterplaner (m/w/d)": [known]})
+    counts = run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
+    assert counts.lookup_known == 1 and counts.lookup_hits == 0
+    owners = conn.execute("SELECT source, job_id FROM postings ORDER BY source").fetchall()
+    assert owners[0]["job_id"] != owners[1]["job_id"]  # the BA Posting stays with its own Job
+
+
+@pytest.mark.parametrize("homeoffice, attached", [(True, True), (False, False)])
+def test_a_remote_indeed_job_only_takes_a_home_office_hit(conn, cfg, monkeypatch, homeoffice, attached):
+    hit = posting(1, "Softwareentwickler (m/w/d)", loc=HAMBURG, homeoffice=homeoffice)
+    client = LookupClient({"Softwareentwickler (m/w/d)": [hit]},
+                          descriptions={"ID-1": "Sie arbeiten 100% remote."})
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Softwareentwickler (m/w/d)", loc=None)])
+    assert client.lookups == [("Softwareentwickler (m/w/d)", None)]  # nationwide
+    sources = [p[0] for p in postings_of(conn, "Softwareentwickler (m/w/d)")]
+    assert ("bundesagentur" in sources) is attached
+    # The full text settles the remote question. Without it, the alert's remote filter is the hint.
+    job = jobs(conn)["Softwareentwickler (m/w/d)"]
+    assert job["eligibility"] == "unclear"
+    assert job["ineligible_reason"].endswith("'100% remote')" if attached else f"'{INDEED_REMOTE_HINT}')")
+
+
+def test_a_remote_indeed_job_with_a_full_text_without_remote_phrase_is_dropped(conn, cfg, monkeypatch):
+    hit = posting(1, "Softwareentwickler (m/w/d)", loc=HAMBURG, homeoffice=True)
+    client = LookupClient({"Softwareentwickler (m/w/d)": [hit]}, descriptions={"ID-1": "2 Tage Homeoffice."})
+    counts = run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Softwareentwickler (m/w/d)", loc=None)])
+    assert jobs(conn)["Softwareentwickler (m/w/d)"]["eligibility"] == "ineligible"
+    assert counts.remote_dropped == 1
+
+
+def test_a_hit_gives_a_job_with_an_unknown_place_its_place(conn, cfg, monkeypatch):
+    region = Location("Musterland")  # a region, not a place the gazetteer knows
+    client = LookupClient({"Musterplaner (m/w/d)": [posting(1, "Musterplaner (m/w/d)")]})
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)", loc=region)])
+    assert client.lookups == [("Musterplaner (m/w/d)", "Musterland")]
+    job = jobs(conn)["Musterplaner (m/w/d)"]
+    assert (job["eligibility"], job["ineligible_reason"], job["location"]) == ("eligible", None, "34117 Kassel")
+    assert job["distance_km"] < 5
+
+
+def test_a_job_with_an_unknown_place_stays_unclear_without_a_hit(conn, cfg, monkeypatch):
+    client = LookupClient()
+    run_with_mail(conn, cfg, client, monkeypatch,
+                  [indeed(1, "Musterplaner (m/w/d)", loc=Location("Musterland"))])
+    job = jobs(conn)["Musterplaner (m/w/d)"]
+    assert (job["eligibility"], job["ineligible_reason"]) == ("unclear", "Ort unbekannt")
+
+
+def test_lookups_per_run_are_capped_oldest_first(conn, cfg, monkeypatch):
+    monkeypatch.setattr(daily, "LOOKUP_PER_RUN", 2)
+    client = LookupClient()
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Werkstoffprüfer")], today=date(2026, 10, 14))
+    counts = run_with_mail(conn, cfg, client, monkeypatch,
+                           [indeed(2, "Elektroingenieur"), indeed(3, "Projektleiter")])
+    assert counts.lookups == 2
+    assert [title for title, _ in client.lookups] == ["Werkstoffprüfer", "Werkstoffprüfer", "Elektroingenieur"]
+
+
+def test_an_indeed_job_with_a_full_text_is_not_looked_up_again(conn, cfg, monkeypatch):
+    client = LookupClient({"Musterplaner (m/w/d)": [posting(1, "Musterplaner (m/w/d)")]})
+    run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
+    counts = run_with_mail(conn, cfg, client, monkeypatch, [], today=date(2026, 10, 17))
+    assert counts.lookups == 0

@@ -1,6 +1,6 @@
 # Issue: Full text for Indeed Jobs from the Bundesagentur
 
-Status: open. Implement on branch `implement-indeed-full-text`.
+Status: Part 1 built, its "Done when" waits for new alert mails. Implement on branch `implement-indeed-full-text`.
 
 ## Goal
 
@@ -22,6 +22,9 @@ The lookup uses only the BA API, which ADR 0002 already allows. It makes no `cla
 - **A BA Posting already in the database is not attached again.** `postings` is unique on `(source, source_id)`. If the hit is already known, it belongs to another Job, and Job matching has already handled that pair. Count it and move on.
 - **Which Indeed Jobs are looked up.** Unscored, snippet-only, Eligibility `eligible` or `unclear`, not a Target company (the Career scan covers those), with a company name. Sponsored results are included as long as they have a company. The plan's idea of skipping Jobs whose snippet already looks like a mismatch is dropped: deciding that would need an AI call, and a BA request costs nothing.
 - **Cap per run.** At most a fixed number of lookups per Daily run (a constant in code, start at 50, oldest-first by `first_seen` so no Job starves). Each lookup is one search request plus, on a hit, one detail request through the existing step. The client's delay applies.
+- **A country as place means remote** (decided during Part 1). An alert mail Posting whose place is only a country came in through the alert's remote filter, so it is a home office Posting. Migration `011` moves stored Jobs of that kind from "Ort unbekannt" to home office. A remote Job is looked up nationwide (the API has no home office filter) and takes only a hit with home office.
+- **A remote alert Job without a full text is kept.** Its snippet rarely says "fully remote", so `settle_remote_jobs` keeps it on the hint "Remote-Filter des Indeed-Alerts" instead of dropping it, and scoring keeps it eligible when the AI answers "unknown". With a full text, the full text decides as for any home office Job.
+- **A hit gives a Job with an unknown place its place.** Such a Job (a region or nothing usable as place) is looked up at that place without a radius, takes the hit's place, and its Eligibility is decided again. Without a hit it stays "Ort unbekannt".
 - **Uncertainty stays visible.** A Job whose only non-snippet Posting has no description (BA offers on partner portals have none) must still count as snippet-only. See facts below; this is a fix in `scoring.py`.
 
 ## Facts to build on

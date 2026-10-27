@@ -26,7 +26,7 @@ from datetime import date
 
 from .companies import _UMLAUTS, normalize_company
 from .eligibility import Decision
-from .sources import Location, Posting
+from .sources import Location, Posting, safe_url
 
 SIMILAR_TITLE = 0.5  # Jaccard overlap of title tokens
 
@@ -124,6 +124,27 @@ def _insert_job(conn, posting: Posting, placement: Placement, decision: Decision
     ).lastrowid
 
 
+def _insert_posting(conn, job_id: int, posting: Posting, today: str) -> None:
+    conn.execute(
+        """INSERT INTO postings (job_id, source, source_id, url, title, company, location_raw,
+                                 description, is_snippet, raw_json, first_seen, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            job_id, posting.source, posting.source_id, posting.url, posting.title, posting.company,
+            posting.location_raw or None, posting.description, int(posting.is_snippet),
+            json.dumps(posting.raw, ensure_ascii=False) if posting.raw else None, today, today,
+        ),
+    )
+
+
+def add_posting(conn: sqlite3.Connection, job_id: int, posting: Posting, today: str) -> None:
+    """Store a Posting as one more Posting of a known Job, without matching. The caller has made sure
+    the Posting is not in the database yet."""
+    posting.url = safe_url(posting.url)  # third-party links become href in the dashboard and the Digest
+    _insert_posting(conn, job_id, posting, today)
+    conn.execute("UPDATE jobs SET last_seen = ? WHERE id = ? AND last_seen < ?", (today, job_id, today))
+
+
 def attach(conn: sqlite3.Connection, posting: Posting, placement: Placement, decision: Decision, today: str,
            index: JobIndex, rules: MatchRules) -> tuple[int, str | None]:
     """Store or refresh a Posting. Returns (job_id, what happened): None for a known Posting,
@@ -155,16 +176,7 @@ def attach(conn: sqlite3.Connection, posting: Posting, placement: Placement, dec
             match_candidate, outcome = candidate.id, "pending"
 
     job_id = _insert_job(conn, posting, placement, decision, today, reopening_of, match_candidate)
-    conn.execute(
-        """INSERT INTO postings (job_id, source, source_id, url, title, company, location_raw,
-                                 description, is_snippet, raw_json, first_seen, last_seen)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            job_id, posting.source, posting.source_id, posting.url, posting.title, posting.company,
-            posting.location_raw or None, posting.description, int(posting.is_snippet),
-            json.dumps(posting.raw, ensure_ascii=False) if posting.raw else None, today, today,
-        ),
-    )
+    _insert_posting(conn, job_id, posting, today)
     if decision.eligibility != "ineligible":
         index.add(job_id, posting.company, posting.title, today, placement.distance_km)
     return job_id, outcome

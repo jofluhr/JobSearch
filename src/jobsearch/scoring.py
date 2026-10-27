@@ -24,7 +24,7 @@ from importlib import resources
 
 from . import ai, db, prompts
 from .config import Config, ConfigError
-from .eligibility import HOMEOFFICE_REASON
+from .eligibility import HOMEOFFICE_REASON, INDEED_REMOTE_HINT
 from .matching import merge
 
 log = logging.getLogger(__name__)
@@ -97,10 +97,11 @@ def backlog(conn: sqlite3.Connection) -> int:
 
 
 _JOB_FIELDS = """j.id, j.title, j.company, j.location, j.distance_km, j.is_target_company, j.eligibility,
-    j.match_candidate,
+    j.ineligible_reason, j.match_candidate,
     (SELECT p.description FROM postings p WHERE p.job_id = j.id AND p.description IS NOT NULL
      ORDER BY length(p.description) DESC LIMIT 1) AS description,
-    NOT EXISTS (SELECT 1 FROM postings p WHERE p.job_id = j.id AND p.is_snippet = 0) AS snippet_only"""
+    NOT EXISTS (SELECT 1 FROM postings p WHERE p.job_id = j.id AND p.is_snippet = 0
+                AND p.description IS NOT NULL) AS snippet_only"""
 
 
 def pick_jobs(conn: sqlite3.Connection, limit: int) -> list[dict]:
@@ -232,7 +233,9 @@ def store(conn: sqlite3.Connection, jobs: list[dict], answer: ai.Answer, p_hash:
             if s["remote"] != "unknown":
                 conn.execute("UPDATE jobs SET remote_type = ? WHERE id = ?", (s["remote"], job["id"]))
             if job["eligibility"] == "unclear":
-                if s["remote"] == "full":
+                # A remote alert Job is remote until the AI finds otherwise; a snippet rarely tells.
+                by_alert_filter = INDEED_REMOTE_HINT in (job["ineligible_reason"] or "")
+                if s["remote"] == "full" or (s["remote"] == "unknown" and by_alert_filter):
                     conn.execute("UPDATE jobs SET eligibility = 'eligible', ineligible_reason = NULL WHERE id = ?",
                                  (job["id"],))
                     counts.remote_confirmed += 1

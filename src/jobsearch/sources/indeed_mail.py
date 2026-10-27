@@ -112,8 +112,9 @@ def _posting(lines: list[str]) -> Posting:
     else:
         digest = hashlib.sha1(f"{title}|{company}|{place}".lower().encode("utf-8")).hexdigest()[:16]
         source_id, url = f"ad-{digest}", link
-    remote = bool(_REMOTE_PLACE.match(place))
-    known_place = place and not remote and place.lower() not in _NOWHERE
+    # A country instead of a place: the ad came in through the alert's remote filter.
+    remote = bool(_REMOTE_PLACE.match(place)) or place.lower() in _NOWHERE
+    known_place = place and not remote
     return Posting(
         "indeed", source_id, title, company, url=url,
         locations=[Location(place)] if known_place else [],

@@ -161,9 +161,10 @@ def test_sponsored_result_gets_a_stable_hash_id():
                                  "\nGehalt laut Indeed: 45.000 € – 60.000 € pro Jahr")
 
 
-def test_country_only_place_has_no_location():
+def test_country_only_place_means_remote():
+    # Such ads come in through the alert's remote filter
     p = parse_alert(alert())[2]
-    assert p.locations == [] and p.raw["place"] == "Deutschland"
+    assert p.locations == [] and p.raw["place"] == "Deutschland" and p.homeoffice_possible is True
 
 
 def test_remote_place_sets_home_office():
@@ -185,6 +186,9 @@ RULES = Rules(30, 70, ())
 class FakeClient:
     def search(self, term, **kwargs):
         return iter([])
+
+    def lookup(self, title, **kwargs):
+        return []
 
     def description(self, refnr):
         return None

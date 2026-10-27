@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 
 from jobsearch import ai, db, digest, notify, prompts, usage
-from jobsearch.eligibility import HOMEOFFICE_REASON
+from jobsearch.eligibility import HOMEOFFICE_REASON, INDEED_REMOTE_HINT
 from jobsearch.scoring import AI_NOT_REMOTE_REASON, run_scoring
 
 from .conftest import FakeAi, add_job, ai_calls
@@ -77,6 +77,14 @@ def test_remote_candidates_are_settled_by_the_ai(conn, cfg):
     rows = {r["id"]: (r["eligibility"], r["ineligible_reason"]) for r in conn.execute("SELECT * FROM jobs")}
     assert rows[full] == ("eligible", None)
     assert rows[hybrid] == ("ineligible", AI_NOT_REMOTE_REASON)
+
+
+@pytest.mark.parametrize("remote, expected", [("unknown", "eligible"), ("full", "eligible"), ("hybrid", "ineligible")])
+def test_a_remote_alert_job_stays_remote_unless_the_ai_says_otherwise(conn, cfg, remote, expected):
+    reason = f"{HOMEOFFICE_REASON} (Hinweis: '{INDEED_REMOTE_HINT}')"
+    job = add_job(conn, "Remote C", eligibility="unclear", reason=reason, snippet=True, source="indeed")
+    run_scoring(conn, cfg, ask=FakeAi(remote=remote))
+    assert conn.execute("SELECT eligibility FROM jobs WHERE id = ?", (job,)).fetchone()[0] == expected
 
 
 def test_missing_profile_is_recorded_like_an_ai_failure(conn, cfg, tmp_path):

@@ -93,22 +93,36 @@ class BundesagenturClient:
         delivered = 0
         for page in range(1, MAX_PAGES + 1):
             params["page"] = page
-            response = self.session.get(SEARCH_URL, params=params, headers={"X-API-Key": API_KEY}, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            entries = data.get("ergebnisliste")
-            if entries is None:
-                if data.get("maxErgebnisse") in (0, "0", None):
-                    return
-                raise SchemaChanged("search response without 'ergebnisliste'")
+            entries, total = self._page(params)
             for entry in entries:
                 yield to_posting(entry)
             delivered += len(entries)
-            total = int(data.get("maxErgebnisse") or 0)
             if not entries or delivered >= total:
                 return
             time.sleep(self.delay)
         log.warning("Stopped after %d pages for %r, results may be incomplete", MAX_PAGES, term)
+
+    def lookup(self, title: str, *, location: str | None = None, radius_km: int | None = None) -> list[Posting]:
+        """The first page of offers for one title, for a targeted lookup. One request, after the delay."""
+        params: dict[str, str | int] = {"was": title, "angebotsart": 1, "size": PAGE_SIZE, "page": 1}
+        if location:
+            params["wo"] = location
+        if radius_km is not None:
+            params["umkreis"] = radius_km
+        time.sleep(self.delay)
+        return [to_posting(entry) for entry in self._page(params)[0]]
+
+    def _page(self, params: dict) -> tuple[list[dict], int]:
+        """One page of search results and the total number of results."""
+        response = self.session.get(SEARCH_URL, params=params, headers={"X-API-Key": API_KEY}, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        entries = data.get("ergebnisliste")
+        if entries is None:
+            if data.get("maxErgebnisse") in (0, "0", None):
+                return [], 0
+            raise SchemaChanged("search response without 'ergebnisliste'")
+        return entries, int(data.get("maxErgebnisse") or 0)
 
     def description(self, refnr: str) -> str | None:
         time.sleep(self.delay)
