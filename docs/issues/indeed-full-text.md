@@ -51,6 +51,16 @@ The lookup uses only the BA API, which ADR 0002 already allows. It makes no `cla
 - After a few days of Daily runs, write the hit rate (rough proportions only) and the chosen thresholds into the plan's Progress section. If the hit rate is very low, record that and consider dropping the lookup.
 - **Done when** the counts show up in the CLI output and `eval`, and the plan has the first numbers.
 
+## Part 3: Rename "geringe Sicherheit" to "geringe Evidenz"
+
+The German label says the model was unsure, but the flag only means the score rests on a snippet. "geringe Evidenz" says that. Only user-facing text changes; the code name `low_confidence`, the column and the English term "Low-confidence score" stay.
+
+- `cli.py` (scoring output), `digest.py` ("geringe Evidenz (keine volle Beschreibung)"), `evaluation.py` (stage metrics row), `market.py` and `templates/market.html` ("davon geringe Evidenz"), `report.py` (label of `stage.low_confidence.*` in the Weekly report input), `templates/job.html` and `templates/jobs.html` (badge).
+- `tests/test_dashboard.py` checks the badge text; update it and any other test that asserts the old wording.
+- `CONTEXT.md`: add the German name to "Low-confidence score" (`In German output it is "geringe Evidenz".`), like the other terms with a German name.
+- Older plan entries that quote the old label stay as they are; they describe what was built then.
+- **Done when** a search for "geringe Sicherheit" in `src/` and `tests/` finds nothing and the tests pass.
+
 ## Follow-ups (not part of this issue)
 
 - **Already scored Indeed Jobs.** A one-off backfill could look up existing snippet-only Jobs, attach hits, and rescore those Jobs with `jobsearch rescore`. `rescore` currently picks Jobs by an older prompt hash, so it would need a second selection.
