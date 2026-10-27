@@ -10,69 +10,9 @@ from jobsearch.eligibility import Rules
 from jobsearch.sources import Location, Posting
 from jobsearch.sources.indeed_mail import Mailbox, MailError, is_account_mail, is_indeed, parse_alert
 
-from .conftest import FIXTURES
+from .conftest import FIXTURES, INDEED, FakeImap, mail_bytes
 
 
-def mail_bytes(sender, subject="Neue Jobs für dich"):
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = sender, "kandidat@example.org", subject
-    msg.set_content("Text")
-    msg.add_alternative("<html><body><p>Jobs</p></body></html>", subtype="html")
-    return msg.as_bytes()
-
-
-class FakeImap:
-    """Just enough of imaplib.IMAP4_SSL: a mailbox of uid -> raw mail."""
-
-    def __init__(self, mails, move=True, fail_login=False, folders=("INBOX", "INBOX/verarbeitet")):
-        self.mails = dict(mails)
-        self.capabilities = ("IMAP4REV1", "MOVE") if move else ("IMAP4REV1",)
-        self.fail_login = fail_login
-        self.folders = {}
-        self.deleted = set()
-        self.folder_names = folders
-
-    def __call__(self, host, port):  # used as the imap_factory
-        return self
-
-    def login(self, user, password):
-        if self.fail_login:
-            import imaplib
-            raise imaplib.IMAP4.error("AUTHENTICATIONFAILED")
-
-    def select(self, box):
-        return "OK", [b"1"]
-
-    def uid(self, command, *args):
-        if command == "SEARCH":
-            return "OK", [b" ".join(self.mails)]
-        uid = args[0].encode() if isinstance(args[0], str) else args[0]
-        if command == "FETCH":
-            return "OK", [(b"1 (BODY[] {n}", self.mails[uid]), b")"]
-        if command in ("MOVE", "COPY"):
-            self.folders.setdefault(args[1].strip('"'), []).append(uid)
-            if command == "MOVE":
-                del self.mails[uid]
-            return "OK", [None]
-        if command == "STORE":
-            self.deleted.add(uid)
-            return "OK", [None]
-        raise AssertionError(command)
-
-    def expunge(self):
-        for uid in self.deleted:
-            del self.mails[uid]
-        self.deleted.clear()
-        return "OK", [None]
-
-    def list(self):
-        return "OK", [f'(\\HasNoChildren) "/" {name}'.encode() for name in self.folder_names]
-
-    def logout(self):
-        pass
-
-
-INDEED = mail_bytes("Indeed <alert@indeed.com>")
 OTHER = mail_bytes("Newsletter <news@not-indeed.example>")
 
 

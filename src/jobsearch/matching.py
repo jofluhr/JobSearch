@@ -106,19 +106,25 @@ def _covered(distance_km: float | None, rules: MatchRules) -> bool:
     return distance_km is not None and distance_km <= rules.radius_query_km
 
 
+def place_values(posting: Posting, placement: Placement) -> tuple:
+    """location, lat, lon, distance_km and is_target_company of a Job, from where its Posting sits."""
+    nearest = placement.nearest
+    return (
+        nearest.label if nearest else posting.location_raw or None,
+        nearest.lat if nearest else None, nearest.lon if nearest else None,
+        None if placement.distance_km is None else round(placement.distance_km, 1),
+        int(placement.is_target_company),
+    )
+
+
 def _insert_job(conn, posting: Posting, placement: Placement, decision: Decision, today: str,
                 reopening_of: int | None, match_candidate: int | None) -> int:
-    nearest = placement.nearest
     return conn.execute(
         """INSERT INTO jobs (company, title, location, lat, lon, distance_km, is_target_company,
                              eligibility, ineligible_reason, first_seen, last_seen, reopening_of, match_candidate)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            posting.company, posting.title,
-            nearest.label if nearest else posting.location_raw or None,
-            nearest.lat if nearest else None, nearest.lon if nearest else None,
-            None if placement.distance_km is None else round(placement.distance_km, 1),
-            int(placement.is_target_company),
+            posting.company, posting.title, *place_values(posting, placement),
             decision.eligibility, decision.reason, today, today, reopening_of, match_candidate,
         ),
     ).lastrowid

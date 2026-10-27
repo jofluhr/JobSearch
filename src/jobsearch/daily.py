@@ -15,17 +15,18 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 
 from . import db, prompts
 from .companies import TargetCompany, match_target_company, normalize_company
 from .config import Config, ConfigError
-from .eligibility import (HOMEOFFICE_REASON, UNKNOWN_PLACE_REASON, Rules, decide, distance_km,
-                          remote_by_alert_filter, settle_remote)
+from .eligibility import (HOMEOFFICE_REASON, Rules, decide, distance_km, remote_by_alert_filter,
+                          settle_remote)
 from .geo import Gazetteer
-from .matching import JobIndex, MatchRules, Placement, add_posting, attach, title_similarity, title_tokens
+from .matching import (JobIndex, MatchRules, Placement, add_posting, attach, place_values, title_similarity,
+                       title_tokens)
 from .scoring import profile_hash
 from .sources import Location, Posting, safe_url
 from .sources.bundesagentur import BundesagenturClient, SchemaChanged
@@ -36,6 +37,7 @@ log = logging.getLogger(__name__)
 LOOKUP_PER_RUN = 50
 LOOKUP_SIMILAR_TITLE = 0.8  # stricter than matching.SIMILAR_TITLE, since a hit is attached without the AI
 LOOKUP_RADIUS_KM = 30
+LOOKUP_DAYS = 7  # a Job is looked up in the Daily runs of its first week, then no more
 
 
 @dataclass
@@ -57,7 +59,7 @@ class Counts:
     lookups: int = 0  # Indeed Jobs looked up at the Bundesagentur for the full text
     lookup_hits: int = 0
     lookup_known: int = 0  # the clear hit was already stored, as a Posting of another Job
-    lookup_dropped: int = 0  # same company found, but title or place not close enough
+    lookup_dropped: int = 0  # lookups that found the same company, but no title and place close enough
     lookup_failures: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -155,6 +157,16 @@ def fetch_missing_descriptions(conn: sqlite3.Connection, client: BundesagenturCl
         counts.descriptions_fetched += 1
 
 
+def lookup_kind(job: sqlite3.Row) -> str:
+    """'remote' for a home office Job, also once it is kept on the alert's remote filter, 'unknown place'
+    for a Job without coordinates, else 'place'."""
+    if (job["ineligible_reason"] or "").startswith(HOMEOFFICE_REASON):
+        return "remote"
+    if job["lat"] is None or job["lon"] is None:
+        return "unknown place"
+    return "place"
+
+
 def _hit_distance(job: sqlite3.Row, hit: Posting) -> float | None:
     """Distance from the Job's place to the hit's nearest place, None when one of them is unknown."""
     if job["lat"] is None or job["lon"] is None:
@@ -164,17 +176,18 @@ def _hit_distance(job: sqlite3.Row, hit: Posting) -> float | None:
 
 
 def clear_hit(job: sqlite3.Row, hits: list[Posting]) -> tuple[Posting | None, bool]:
-    """The best hit of the same company with a very similar title and a fitting place (near the Job's
-    place when both are known), and whether hits of the same company were dropped without a clear one."""
-    key, tokens = normalize_company(job["company"]), title_tokens(job["title"])
+    """The best hit of the same company with a very similar title and a fitting place, and whether hits
+    of the same company were dropped without a clear one. A remote Job needs a hit with home office, a Job
+    with a place a hit near it. A hit or Job without coordinates passes the place check and ranks as near."""
+    key, tokens, kind = normalize_company(job["company"]), title_tokens(job["title"]), lookup_kind(job)
     clear, dropped = [], False
     for hit in hits:
         if normalize_company(hit.company) != key:
             continue
         similarity = title_similarity(tokens, title_tokens(hit.title))
         distance = _hit_distance(job, hit)
-        if job["ineligible_reason"] == HOMEOFFICE_REASON:
-            place_fits = hit.homeoffice_possible  # a remote Job
+        if kind == "remote":
+            place_fits = hit.homeoffice_possible
         else:
             place_fits = distance is None or distance <= LOOKUP_RADIUS_KM
         if similarity < LOOKUP_SIMILAR_TITLE or not place_fits:
@@ -186,9 +199,10 @@ def clear_hit(job: sqlite3.Row, hits: list[Posting]) -> tuple[Posting | None, bo
 
 
 def _search_hits(client: BundesagenturClient, job: sqlite3.Row) -> list[Posting]:
-    if job["ineligible_reason"] == HOMEOFFICE_REASON:
-        return client.lookup(job["title"])  # remote: nationwide, the hit must offer home office
-    if job["lat"] is None or job["lon"] is None:
+    kind = lookup_kind(job)
+    if kind == "remote":
+        return client.lookup(job["title"])  # nationwide, the hit must offer home office
+    if kind == "unknown place":
         return client.lookup(job["title"], location=job["location"])  # a region or nothing usable
     return client.lookup(job["title"], location=job["location"], radius_km=LOOKUP_RADIUS_KM)
 
@@ -199,14 +213,10 @@ def _relocate(conn: sqlite3.Connection, job: sqlite3.Row, hit: Posting, cfg: Con
     placement = place(hit, cfg, targets)
     decision = decide(rules, job["title"], placement.distance_km, placement.is_target_company,
                       hit.homeoffice_possible)
-    nearest = placement.nearest
     conn.execute(
         """UPDATE jobs SET location = ?, lat = ?, lon = ?, distance_km = ?, is_target_company = ?,
                            eligibility = ?, ineligible_reason = ? WHERE id = ?""",
-        (nearest.label if nearest else hit.location_raw or None, nearest.lat if nearest else None,
-         nearest.lon if nearest else None,
-         None if placement.distance_km is None else round(placement.distance_km, 1),
-         int(placement.is_target_company), decision.eligibility, decision.reason, job["id"]),
+        (*place_values(hit, placement), decision.eligibility, decision.reason, job["id"]),
     )
 
 
@@ -215,14 +225,17 @@ def lookup_full_text(conn: sqlite3.Connection, client: BundesagenturClient, cfg:
     """Snippet-only Indeed Jobs, still unscored: look for the same opening at the Bundesagentur and attach a
     clear hit as one more Posting, so its description is fetched and the Job is scored on the full text.
     A Job with an unknown place takes the hit's place. Target companies are left to the Career scan.
-    Oldest first, at most LOOKUP_PER_RUN per run."""
+    Only Jobs first seen within LOOKUP_DAYS, oldest first, at most LOOKUP_PER_RUN per run: a Job without
+    a hit is tried again for a few days, and Jobs that are never scored do not crowd out new ones."""
     rows = conn.execute(
         """SELECT j.id, j.title, j.company, j.location, j.lat, j.lon, j.ineligible_reason FROM jobs j
            WHERE j.eligibility IN ('eligible', 'unclear') AND j.is_target_company = 0
              AND EXISTS (SELECT 1 FROM postings p WHERE p.job_id = j.id AND p.source = 'indeed')
              AND NOT EXISTS (SELECT 1 FROM postings p WHERE p.job_id = j.id AND p.is_snippet = 0)
              AND NOT EXISTS (SELECT 1 FROM fit_scores s WHERE s.job_id = j.id)
-           ORDER BY j.first_seen, j.id"""
+             AND j.first_seen > ?
+           ORDER BY j.first_seen, j.id""",
+        ((today - timedelta(days=LOOKUP_DAYS)).isoformat(),),
     ).fetchall()
     for job in [r for r in rows if normalize_company(r["company"])][:LOOKUP_PER_RUN]:
         counts.lookups += 1
@@ -243,22 +256,24 @@ def lookup_full_text(conn: sqlite3.Connection, client: BundesagenturClient, cfg:
         hit.raw = {**(hit.raw or {}), "found_by": "lookup"}
         with conn:
             add_posting(conn, job["id"], hit, today.isoformat())
-            if job["ineligible_reason"] == UNKNOWN_PLACE_REASON:
+            if lookup_kind(job) == "unknown place":
                 _relocate(conn, job, hit, cfg, targets, rules)
         counts.lookup_hits += 1
 
 
 def settle_remote_jobs(conn: sqlite3.Connection, counts: Counts) -> None:
     """Home office Jobs outside the radius: keep only those whose full text suggests fully remote.
-    An alert mail Job without a full text is kept on the alert's remote filter, its snippet rarely tells."""
+    An alert mail Job without a full text is kept on the alert's remote filter, its snippet rarely tells,
+    and is decided again once a full text arrives."""
     rows = conn.execute(
         """SELECT j.id,
                   (SELECT p.description FROM postings p WHERE p.job_id = j.id AND p.is_snippet = 0
                    AND p.description IS NOT NULL ORDER BY length(p.description) DESC LIMIT 1) AS description,
                   EXISTS (SELECT 1 FROM postings p WHERE p.job_id = j.id AND p.source = 'indeed') AS from_alert
-           FROM jobs j WHERE j.eligibility = 'unclear' AND j.ineligible_reason = ?
-             AND (description IS NOT NULL OR from_alert)""",
-        (HOMEOFFICE_REASON,),
+           FROM jobs j WHERE j.eligibility = 'unclear'
+             AND (j.ineligible_reason = ? AND (description IS NOT NULL OR from_alert)
+                  OR j.ineligible_reason = ? AND description IS NOT NULL)""",
+        (HOMEOFFICE_REASON, remote_by_alert_filter().reason),
     ).fetchall()
     with conn:
         for row in rows:

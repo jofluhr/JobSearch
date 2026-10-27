@@ -10,7 +10,7 @@ from jobsearch.eligibility import INDEED_REMOTE_HINT, Rules
 from jobsearch.sources import Location, Posting
 from jobsearch.sources.indeed_mail import Mailbox
 
-from .test_indeed_mail import INDEED, FakeImap
+from .conftest import INDEED, FakeImap
 
 RULES = Rules(30, 70, ("Werkstudent",))
 TARGETS = [TargetCompany("Example Tech AG", (normalize_company("Example Tech"),), "Kassel", "", "", "")]
@@ -293,3 +293,31 @@ def test_an_indeed_job_with_a_full_text_is_not_looked_up_again(conn, cfg, monkey
     run_with_mail(conn, cfg, client, monkeypatch, [indeed(1, "Musterplaner (m/w/d)")])
     counts = run_with_mail(conn, cfg, client, monkeypatch, [], today=date(2026, 10, 17))
     assert counts.lookups == 0
+
+
+@pytest.mark.parametrize("homeoffice, description, eligibility", [
+    (False, None, "unclear"),  # no home office at the BA: not attached, still kept on the alert's filter
+    (True, "Sie arbeiten 100% remote.", "unclear"),
+    (True, "2 Tage Homeoffice pro Woche.", "ineligible"),  # the full text decides over the filter hint
+])
+def test_a_remote_job_kept_on_the_alert_filter_is_still_remote_in_the_next_run(conn, cfg, monkeypatch, homeoffice,
+                                                                              description, eligibility):
+    run_with_mail(conn, cfg, LookupClient(), monkeypatch, [indeed(1, "Softwareentwickler (m/w/d)", loc=None)])
+    hit = posting(1, "Softwareentwickler (m/w/d)", loc=HAMBURG, homeoffice=homeoffice)
+    client = LookupClient({"Softwareentwickler (m/w/d)": [hit]}, descriptions={"ID-1": description})
+    run_with_mail(conn, cfg, client, monkeypatch, [], today=date(2026, 10, 17))
+    assert client.lookups == [("Softwareentwickler (m/w/d)", None)]
+    sources = [p[0] for p in postings_of(conn, "Softwareentwickler (m/w/d)")]
+    assert ("bundesagentur" in sources) is homeoffice
+    assert jobs(conn)["Softwareentwickler (m/w/d)"]["eligibility"] == eligibility
+
+
+def test_a_job_is_looked_up_only_in_its_first_week(conn, cfg, monkeypatch):
+    region = Location("Musterland")  # never scored, so it would be looked up for ever
+    run_with_mail(conn, cfg, LookupClient(), monkeypatch, [indeed(1, "Musterplaner", loc=region)],
+                  today=date(2026, 10, 16))
+    week_later = LookupClient()
+    run_with_mail(conn, cfg, week_later, monkeypatch, [], today=date(2026, 10, 22))
+    later = LookupClient()
+    run_with_mail(conn, cfg, later, monkeypatch, [], today=date(2026, 10, 23))
+    assert [t for t, _ in week_later.lookups] == ["Musterplaner"] and later.lookups == []
