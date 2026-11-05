@@ -409,3 +409,72 @@ def test_the_detail_page_says_the_ai_sorted_the_job_out(client, conn):
     html = page(client, f"/job/{off}")
     assert "Von der KI aussortiert" in html and "Anderes Berufsfeld." in html
     assert "Von der KI aussortiert" not in page(client, f"/job/{kept}")
+
+
+def nav(html):
+    """Previous and next link targets on a detail page."""
+    prev = re.search(r'href="([^"]+)" rel="prev"', html)
+    nxt = re.search(r'href="([^"]+)" rel="next"', html)
+    return (prev[1] if prev else None), (nxt[1] if nxt else None)
+
+
+@pytest.fixture
+def queue(conn):
+    """Four Jobs in list order ★★★, ★★, ★★ (already judged), ★; the last one from another source."""
+    ids = {}
+    # Same tier and day: the newer Job comes first, so "judged" is added before "middle".
+    for name, tier, source in [("top", 3, "bundesagentur"), ("judged", 2, "bundesagentur"),
+                               ("middle", 2, "bundesagentur"), ("low", 1, "indeed")]:
+        ids[name] = add_job(conn, name.title(), source=source)
+        score(conn, ids[name], tier)
+    with conn:
+        conn.execute("UPDATE jobs SET status = 'interesting' WHERE id = ?", (ids["judged"],))
+    return ids
+
+
+def test_detail_links_to_the_neighbouring_new_jobs_in_list_order(client, queue):
+    assert nav(page(client, f"/job/{queue['middle']}")) == (f"/job/{queue['top']}", f"/job/{queue['low']}")
+    assert nav(page(client, f"/job/{queue['top']}")) == (None, f"/job/{queue['middle']}")
+    assert nav(page(client, f"/job/{queue['low']}")) == (f"/job/{queue['middle']}", None)  # judged is skipped
+
+
+def test_a_judged_job_keeps_its_neighbours(client, queue):
+    assert nav(page(client, f"/job/{queue['judged']}")) == (f"/job/{queue['middle']}", f"/job/{queue['low']}")
+
+
+def test_the_list_filters_carry_over_to_the_detail_page(client, queue):
+    assert f'href="/job/{queue["top"]}?tier=3"' in page(client, "/?tier=3")
+    html = page(client, f"/job/{queue['middle']}?source=bundesagentur")
+    assert nav(html) == (f"/job/{queue['top']}?source=bundesagentur", None)  # low is from Indeed
+    assert 'href="/?source=bundesagentur">← Alle Jobs' in html
+
+
+def test_the_status_filter_does_not_limit_the_navigation(client, queue):
+    html = page(client, f"/job/{queue['middle']}?status=interesting")
+    assert nav(html) == (f"/job/{queue['top']}?status=interesting", f"/job/{queue['low']}?status=interesting")
+
+
+def test_a_job_outside_the_filtered_list_has_no_links(client, queue):
+    assert nav(page(client, f"/job/{queue['middle']}?tier=3")) == (None, None)
+
+
+def save(client, url, button):
+    """Press one of the two save buttons on a detail page."""
+    html = page(client, url)
+    token = re.search(r'name="token" value="([^"]+)"', html)[1]
+    target = re.search(rf'<button[^>]*name="next" value="([^"]+)">{button}</button>', html)[1]
+    return client.post(url.split("?")[0] + "/status",
+                       data={"status": "not_interesting", "token": token, "next": target})
+
+
+def test_save_and_next_opens_the_next_new_job(client, conn, queue):
+    response = save(client, f"/job/{queue['top']}?source=bundesagentur", "Speichern und weiter")
+    assert response.headers["Location"] == f"/job/{queue['middle']}?source=bundesagentur"
+    assert conn.execute("SELECT status FROM jobs WHERE id = ?", (queue["top"],)).fetchone()[0] == "not_interesting"
+    response = save(client, f"/job/{queue['middle']}?source=bundesagentur", "Speichern und weiter")
+    assert response.headers["Location"] == "/?source=bundesagentur"  # no new Job left
+
+
+def test_save_stays_on_the_job(client, queue):
+    response = save(client, f"/job/{queue['top']}?tier=3", "Speichern")
+    assert response.headers["Location"] == f"/job/{queue['top']}?tier=3"

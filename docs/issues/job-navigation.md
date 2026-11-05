@@ -1,6 +1,6 @@
 # Issue: Previous and next new Job on the dashboard detail page
 
-Status: open. Implement on branch `implement-job-navigation`.
+Status: Part 1 built (2026-11-05), waiting for the candidate's look in the browser. Implement on branch `implement-job-navigation`.
 
 ## Goal
 

@@ -19,6 +19,8 @@ from .digest import REMOTE_LABELS
 log = logging.getLogger(__name__)
 
 LATEST_SCORE = f"LEFT JOIN fit_scores f ON f.id = {db.NEWEST_SCORE_ID}"
+# The list's order; the previous and next links on the detail page follow it as well.
+JOB_ORDER = "f.tier IS NULL, f.tier DESC, j.first_seen DESC, j.id DESC"
 # Requests closer together than this belong to one visit, so filtering keeps the "neu" markers.
 VISIT_GAP = timedelta(hours=1)
 # A dashboard left open and used all day still starts a new visit after this long.
@@ -78,6 +80,26 @@ def job_filter(args) -> tuple[str, list, dict]:
         where.pop()
         chosen["since"] = ""
     return " AND ".join(where) or "1", params, chosen
+
+
+def filter_args(chosen: dict) -> dict[str, str]:
+    """The chosen filters for links that carry them, without empty values and the default Eligibility."""
+    return {k: v for k, v in chosen.items() if v and not (k == "eligibility" and v == "reach")}
+
+
+def neighbours(conn: sqlite3.Connection, args, job_id: int) -> tuple[int | None, int | None]:
+    """Previous and next Job with Job status new in the filtered list's order. The status filter
+    does not apply, and the current Job keeps its place even after it was judged."""
+    where, params, _ = job_filter({k: v for k, v in args.items() if k != "status"})
+    ids = [r[0] for r in conn.execute(
+        f"""SELECT j.id FROM jobs j {LATEST_SCORE} WHERE {where} AND (j.status = 'new' OR j.id = ?)
+            ORDER BY {JOB_ORDER}""",
+        [*params, job_id],
+    )]
+    if job_id not in ids:
+        return None, None
+    at = ids.index(job_id)
+    return (ids[at - 1] if at > 0 else None), (ids[at + 1] if at + 1 < len(ids) else None)
 
 
 def visit_baseline(conn: sqlite3.Connection, now: datetime) -> int:
@@ -176,10 +198,11 @@ def create_app(cfg: Config, now: Callable[[], datetime] = datetime.now) -> Flask
         where, params, chosen = job_filter(request.args)
         rows = conn().execute(
             f"""SELECT j.*, f.tier, f.low_confidence, f.sorted_out FROM jobs j {LATEST_SCORE} WHERE {where}
-                ORDER BY f.tier IS NULL, f.tier DESC, j.first_seen DESC, j.id DESC""",
+                ORDER BY {JOB_ORDER}""",
             params,
         ).fetchall()
-        return render_template("jobs.html", jobs=rows, chosen=chosen, baseline=visit_baseline(conn(), now()),
+        return render_template("jobs.html", jobs=rows, chosen=chosen, nav_args=filter_args(chosen),
+                               baseline=visit_baseline(conn(), now()),
                                terms=term_options(conn()), job_terms=terms_by_job(conn()),
                                token=token, here=request.full_path.rstrip("?"))
 
@@ -204,8 +227,14 @@ def create_app(cfg: Config, now: Callable[[], datetime] = datetime.now) -> Flask
         notes = conn().execute(
             "SELECT * FROM feedback_notes WHERE job_id = ? ORDER BY created_at DESC, id DESC", (job_id,)).fetchall()
         visit_baseline(conn(), now())
+        nav_args = filter_args(job_filter(request.args)[2])
+        prev_id, next_id = neighbours(conn(), request.args, job_id)
+        onward = (url_for("job_detail", job_id=next_id, **nav_args) if next_id
+                  else url_for("jobs", **nav_args))
         return render_template("job.html", job=job, postings=postings, description=description, score=score,
-                               chain=reopening_chain(conn(), job_id), notes=notes, token=token, terms=terms)
+                               chain=reopening_chain(conn(), job_id), notes=notes, token=token, terms=terms,
+                               nav_args=nav_args, prev_id=prev_id, next_id=next_id, onward=onward,
+                               here=url_for("job_detail", job_id=job_id, **nav_args))
 
     def check_token() -> None:
         if not hmac.compare_digest(request.form.get("token", "").encode(), token.encode()):

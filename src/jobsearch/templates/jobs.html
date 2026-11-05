@@ -57,7 +57,7 @@
   {% for job in jobs %}
     <tr id="job-{{ job.id }}" class="st-{{ job.status }}">
       <td class="tier" {% if job.tier %}aria-label="{{ job.tier }} von 3 Sternen"{% endif %}>{{ "★" * job.tier if job.tier else "–" }}</td>
-      <td><a class="title{{ ' marked-%d' % job.tier if job.tier and not job.sorted_out }}" href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.title }}</a>
+      <td><a class="title{{ ' marked-%d' % job.tier if job.tier and not job.sorted_out }}" href="{{ url_for('job_detail', job_id=job.id, **nav_args) }}">{{ job.title }}</a>
         {%- if job.id > baseline %} <span class="badge new">neu</span>{% endif %}
         {%- if job.is_target_company %} <span class="badge target">Zielunternehmen</span>{% endif %}
         {%- if job.low_confidence %} <span class="badge">geringe Evidenz</span>{% endif %}

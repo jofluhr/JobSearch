@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} – JobSearch{% endblock %}
 {% block style %}
+  .job-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; margin-bottom: 16px; }
+  .job-nav .back { margin-bottom: 0; }
+  .job-nav .step { display: flex; gap: 24px; }
+  .job-nav .step [rel=next]:only-child { margin-left: auto; }
   .job-head { margin-bottom: 24px; max-width: 60em; }
   .job-head h1 { margin-bottom: 6px; }
   .where { font-size: 18px; margin: 0 0 4px; }
@@ -34,7 +38,15 @@
   }
 {% endblock %}
 {% block content %}
-<a class="back" href="{{ url_for('jobs') }}">← Alle Jobs</a>
+<nav class="job-nav">
+  <a class="back" href="{{ url_for('jobs', **nav_args) }}">← Alle Jobs</a>
+  {%- if prev_id or next_id %}
+  <span class="step">
+    {%- if prev_id %}<a href="{{ url_for('job_detail', job_id=prev_id, **nav_args) }}" rel="prev">← vorheriger neuer Job</a>{% endif %}
+    {%- if next_id %}<a href="{{ url_for('job_detail', job_id=next_id, **nav_args) }}" rel="next">nächster neuer Job →</a>{% endif %}
+  </span>
+  {%- endif %}
+</nav>
 <header class="job-head">
   <h1><span class="{{ 'marked-%d' % score.tier if score and score.tier and not score.sorted_out }}">{{ job.title }}</span></h1>
   <p class="where">{{ job.company }}{% if job.location %} in {{ job.location }}{% endif %}</p>
@@ -81,7 +93,8 @@
       </fieldset>
       <textarea name="note" rows="3" aria-label="Notiz"
                 placeholder="Notiz (optional), zum Beispiel warum der Job (nicht) passt. Fließt in künftige Bewertungen ein."></textarea>
-      <div class="save"><button class="primary">Speichern</button>
+      <div class="save"><button class="primary" name="next" value="{{ here }}">Speichern</button>
+        <button name="next" value="{{ onward }}">Speichern und weiter</button>
         {% if job.applied_on %}<span class="muted">Beworben am {{ job.applied_on }}</span>{% endif %}</div>
     </form>
     {% if notes %}
