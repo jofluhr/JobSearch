@@ -32,7 +32,7 @@ Tracing is off by default. It makes no AI calls of its own and adds no migration
 - `pyproject.toml`: optional extra `trace = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-http"]` with minimum versions. The `dev` extra gets the same packages so the tests run.
 - `config.py` and `.env.example`: `TRACING_ENDPOINT=` (empty), with a comment naming the Phoenix default `http://localhost:6006/v1/traces`.
 - New module `src/jobsearch/tracing.py`, the only module that imports OpenTelemetry:
-  - `setup(cfg, command: str)`: does nothing when the endpoint is empty. Otherwise checks the host is local (`ConfigError` in German if not), imports the SDK lazily (a German hint to install the `trace` extra if missing), and sets a tracer provider with service name `jobsearch`, a batch processor and the OTLP/HTTP exporter with a short timeout.
+  - `setup(cfg, command: str)`: does nothing when the endpoint is empty. Otherwise checks the host is local (`ConfigError` in German if not), imports the SDK lazily (a German hint to install the `trace` extra if missing), and sets a tracer provider with the resource attributes `service.name` and `openinference.project.name`, both `jobsearch` (Phoenix groups traces into projects by the latter; without it they land in "default", mixed with other programs sending to the same Phoenix), a batch processor and the OTLP/HTTP exporter with a short timeout.
   - `span(name, **attributes)`: a context manager that yields the span, or a no-op object with the same methods when tracing is off. An exception inside marks the span as error and is re-raised.
   - `shutdown()`: flushes with a bounded wait; does nothing when off.
 - `cli.main()` calls `setup()` after logging and `shutdown()` in a `finally`. The command name becomes the root span (`jobsearch daily`, `jobsearch run`, ...).
@@ -46,6 +46,7 @@ Tracing is off by default. It makes no AI calls of its own and adds no migration
 - Tests (`tests/test_tracing.py`, `tests/test_ai.py`), with OpenTelemetry's in-memory exporter, no network:
   - off: `span()` is a no-op, nothing is imported from OpenTelemetry, `ask()` works as today;
   - a non-local endpoint is refused at setup;
+  - spans carry the project name `jobsearch` in their resource;
   - a successful call yields one LLM span with prompt, system prompt, answer, model and tokens;
   - an invalid first answer yields two spans, the first with status error and the reason;
   - a timeout and an error envelope yield an error span; a quota error still raises `AiError` after the span ends;
@@ -68,4 +69,4 @@ Tracing is off by default. It makes no AI calls of its own and adds no migration
 
 ## Done when
 
-On the live setup with Phoenix running locally and `TRACING_ENDPOINT` set: `jobsearch daily` produces one trace in Phoenix that shows the steps with their durations, and the scoring call opens to show its system prompt, prompt, answer, model and tokens, with the same tokens as its row in `ai_calls`. With Phoenix stopped, the same command finishes normally and takes at most a few seconds longer. With `TRACING_ENDPOINT` empty, nothing changes. Findings go into `docs/implementation-plan.md`.
+On the live setup with Phoenix running locally and `TRACING_ENDPOINT` set: `jobsearch daily` produces one trace in Phoenix's project `jobsearch` that shows the steps with their durations, and the scoring call opens to show its system prompt, prompt, answer, model and tokens, with the same tokens as its row in `ai_calls`. With Phoenix stopped, the same command finishes normally and takes at most a few seconds longer. With `TRACING_ENDPOINT` empty, nothing changes. Findings go into `docs/implementation-plan.md`.
