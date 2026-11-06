@@ -1,6 +1,6 @@
 # Issue: Trace runs and AI calls in a local Phoenix
 
-Status: open. Implement on branch `implement-tracing`.
+Status: Part 1 built (2026-11-06). Implement on branch `implement-tracing`.
 
 ## Goal
 
@@ -30,7 +30,7 @@ Tracing is off by default. It makes no AI calls of its own and adds no migration
 ## Part 1: Tracing module and AI call spans
 
 - `pyproject.toml`: optional extra `trace = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-http"]` with minimum versions. The `dev` extra gets the same packages so the tests run.
-- `config.py` and `.env.example`: `TRACING_ENDPOINT=` (empty), with a comment naming the Phoenix default `http://localhost:6006/v1/traces`.
+- `config.py` and `.env.example`: `TRACING_ENDPOINT=` (empty), with a comment naming the Phoenix default `http://127.0.0.1:6006/v1/traces`. (Changed during implementation: `127.0.0.1` instead of `localhost`, since on Windows each connection to `localhost` first waits about 2 seconds for IPv6, which Phoenix does not listen on.)
 - New module `src/jobsearch/tracing.py`, the only module that imports OpenTelemetry:
   - `setup(cfg, command: str)`: does nothing when the endpoint is empty. Otherwise checks the host is local (`ConfigError` in German if not), imports the SDK lazily (a German hint to install the `trace` extra if missing), and sets a tracer provider with the resource attributes `service.name` and `openinference.project.name`, both `jobsearch` (Phoenix groups traces into projects by the latter; without it they land in "default", mixed with other programs sending to the same Phoenix), a batch processor and the OTLP/HTTP exporter with a short timeout.
   - `span(name, **attributes)`: a context manager that yields the span, or a no-op object with the same methods when tracing is off. An exception inside marks the span as error and is re-raised.

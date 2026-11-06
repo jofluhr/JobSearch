@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from . import tracing
 from .usage import PURPOSES, CallUsage, from_envelope
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,55 @@ def _record(recorder: UsageRecorder | None, usage: CallUsage) -> None:
         log.warning("Could not record AI usage", exc_info=True)
 
 
+# Attribute names of an AI call span follow OpenInference, so Phoenix shows prompt, answer and tokens.
+def _span_input(cmd: list[str], model: str, system: str, prompt: str, purpose: str, attempt: int) -> dict:
+    return {
+        "openinference.span.kind": "LLM",
+        "llm.provider": "anthropic",
+        "llm.model_name": model,
+        "llm.invocation_parameters": json.dumps(cmd[1:]),  # without the executable's path
+        "llm.input_messages.0.message.role": "system",
+        "llm.input_messages.0.message.content": system,
+        "llm.input_messages.1.message.role": "user",
+        "llm.input_messages.1.message.content": prompt,
+        "input.value": prompt,
+        "input.mime_type": "text/plain",
+        "jobsearch.purpose": purpose,
+        "jobsearch.attempt": attempt,
+    }
+
+
+def _span_result(usage: CallUsage, output: str | None, mime_type: str) -> dict:
+    counts = (usage.input_tokens, usage.cache_read_tokens, usage.cache_creation_tokens)
+    prompt_tokens = sum(n or 0 for n in counts) if any(n is not None for n in counts) else None
+    total = None if prompt_tokens is None and usage.output_tokens is None \
+        else (prompt_tokens or 0) + (usage.output_tokens or 0)
+    attributes = {
+        "llm.model_name": usage.model,
+        "llm.token_count.prompt": prompt_tokens,
+        "llm.token_count.prompt_details.cache_read": usage.cache_read_tokens,
+        "llm.token_count.prompt_details.cache_write": usage.cache_creation_tokens,
+        "llm.token_count.completion": usage.output_tokens,
+        "llm.token_count.total": total,
+        "jobsearch.outcome": usage.outcome,
+        "jobsearch.cost_usd": usage.cost_usd,
+        "jobsearch.duration_ms": usage.duration_ms,
+        "jobsearch.num_turns": usage.num_turns,
+    }
+    if output is not None:
+        attributes |= {"output.value": output, "output.mime_type": mime_type,
+                       "llm.output_messages.0.message.role": "assistant",
+                       "llm.output_messages.0.message.content": output}
+    return attributes
+
+
+def _finish(recorder: UsageRecorder | None, span: tracing.Span, usage: CallUsage, output: str | None = None,
+            mime_type: str = "application/json") -> None:
+    """Stores the attempt's AI usage and adds it to its span."""
+    _record(recorder, usage)
+    span.set(_span_result(usage, output, mime_type))
+
+
 def ask(
     prompt: str,
     *,
@@ -128,33 +178,37 @@ def ask(
     cmd = command(model, schema, system, tools)
     problem = ""
     for attempt in (1, 2):
-        started_at = datetime.now().isoformat(timespec="seconds")
-        usage = dict(purpose=purpose, model=model, attempt=attempt, started_at=started_at)
-        try:
-            proc = runner(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-                          timeout=timeout, cwd=tempfile.gettempdir(), creationflags=NO_WINDOW)
-        except subprocess.TimeoutExpired:
-            _record(usage_recorder, from_envelope(None, outcome="timeout", **usage))
-            raise AiError(f"Claude hat nach {timeout // 60} Minuten nicht geantwortet.") from None
-        envelope = _envelope(proc)
-        if envelope is not None:  # the raw numbers next to the stored row, for checking by hand
-            log.info("AI usage (%s, attempt %d): %s", purpose, attempt, json.dumps(
-                {k: envelope.get(k) for k in ("modelUsage", "total_cost_usd", "duration_ms", "num_turns")}))
-        try:
-            data, used_model = _parse(proc, envelope)
-        except AiError:
-            _record(usage_recorder, from_envelope(envelope, outcome="error", **usage))
-            raise
-        try:
-            if not isinstance(data, dict):
-                raise InvalidAnswer("keine strukturierte Antwort")
-            if check:
-                check(data)
-        except InvalidAnswer as e:
-            _record(usage_recorder, from_envelope(envelope, outcome="invalid", **usage))
-            problem = str(e)
-            log.warning("Invalid AI answer (attempt %d): %s", attempt, problem)
-        else:
-            _record(usage_recorder, from_envelope(envelope, outcome="ok", **usage))
-            return Answer(data, used_model or model)
+        with tracing.span(f"claude -p {purpose}", _span_input(cmd, model, system, prompt, purpose, attempt)) as span:
+            started_at = datetime.now().isoformat(timespec="seconds")
+            usage = dict(purpose=purpose, model=model, attempt=attempt, started_at=started_at)
+            try:
+                proc = runner(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
+                              timeout=timeout, cwd=tempfile.gettempdir(), creationflags=NO_WINDOW)
+            except subprocess.TimeoutExpired:
+                _finish(usage_recorder, span, from_envelope(None, outcome="timeout", **usage))
+                raise AiError(f"Claude hat nach {timeout // 60} Minuten nicht geantwortet.") from None
+            envelope = _envelope(proc)
+            if envelope is not None:  # the raw numbers next to the stored row, for checking by hand
+                log.info("AI usage (%s, attempt %d): %s", purpose, attempt, json.dumps(
+                    {k: envelope.get(k) for k in ("modelUsage", "total_cost_usd", "duration_ms", "num_turns")}))
+            try:
+                data, used_model = _parse(proc, envelope)
+            except AiError as e:
+                _finish(usage_recorder, span, from_envelope(envelope, outcome="error", **usage), str(e), "text/plain")
+                raise
+            output = json.dumps(data, ensure_ascii=False)
+            try:
+                if not isinstance(data, dict):
+                    raise InvalidAnswer("keine strukturierte Antwort")
+                if check:
+                    check(data)
+            except InvalidAnswer as e:
+                _finish(usage_recorder, span, from_envelope(envelope, outcome="invalid", **usage), output)
+                problem = str(e)
+                span.set({"jobsearch.invalid_reason": problem})
+                span.fail(problem)
+                log.warning("Invalid AI answer (attempt %d): %s", attempt, problem)
+            else:
+                _finish(usage_recorder, span, from_envelope(envelope, outcome="ok", **usage), output)
+                return Answer(data, used_model or model)
     raise AiError(f"Claude hat zweimal keine brauchbare Antwort geliefert: {problem}")

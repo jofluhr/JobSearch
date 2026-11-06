@@ -2,8 +2,9 @@ import json
 import subprocess
 
 import pytest
+from opentelemetry.trace import StatusCode
 
-from jobsearch import ai
+from jobsearch import ai, tracing
 
 
 @pytest.fixture(autouse=True)
@@ -157,3 +158,62 @@ def test_usage_falls_back_to_the_call_wide_fields_without_model_usage():
     assert (u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens) == (
         "sonnet", 3, 50, 100, 200)
     assert (u.web_search_requests, u.thinking_tokens, u.cost_usd) == (1, None, 0.02)
+
+
+@pytest.fixture
+def spans():
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    tracing.setup("http://localhost:6006/v1/traces", exporter=exporter)
+    yield exporter
+    tracing.shutdown()
+
+
+def test_traces_a_successful_call(spans):
+    ask(FakeRunner((envelope({"ok": True}, usage=USAGE), 0, "")))
+    [span] = spans.get_finished_spans()
+    a = span.attributes
+    assert span.name == "claude -p scoring"
+    assert span.status.status_code == StatusCode.UNSET
+    assert a["openinference.span.kind"] == "LLM"
+    assert (a["llm.input_messages.0.message.content"], a["input.value"]) == ("sys", "prompt")
+    assert json.loads(a["output.value"]) == {"ok": True}
+    assert a["llm.model_name"] == "claude-sonnet-test"
+    assert (a["llm.token_count.prompt"], a["llm.token_count.completion"], a["llm.token_count.total"]) == (
+        12 + 900 + 1600, 340, 12 + 900 + 1600 + 340)
+    assert (a["jobsearch.outcome"], a["jobsearch.attempt"], a["jobsearch.cost_usd"]) == ("ok", 1, 0.0123)
+    assert "claude" not in json.loads(a["llm.invocation_parameters"])[0]  # no executable path
+
+
+def test_traces_each_attempt_of_a_retry(spans):
+    def check(data):
+        if not data.get("ok"):
+            raise ai.InvalidAnswer("nicht ok")
+    ask(FakeRunner((envelope({"ok": False}), 0, ""), (envelope({"ok": True}), 0, "")), check)
+    first, second = spans.get_finished_spans()
+    assert (first.attributes["jobsearch.outcome"], first.attributes["jobsearch.invalid_reason"]) == (
+        "invalid", "nicht ok")
+    assert (first.status.status_code, first.status.description) == (StatusCode.ERROR, "nicht ok")
+    assert (second.attributes["jobsearch.attempt"], second.status.status_code) == (2, StatusCode.UNSET)
+
+
+def test_traces_a_quota_error_and_still_raises(spans):
+    runner = FakeRunner((envelope(is_error=True, result="Claude usage limit reached.", usage=USAGE), 1, ""))
+    with pytest.raises(ai.AiError, match="Kontingent"):
+        ask(runner)
+    [span] = spans.get_finished_spans()
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["jobsearch.outcome"] == "error"
+    assert "Kontingent" in span.attributes["output.value"]
+
+
+def test_traces_a_timeout(spans):
+    def runner(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+    with pytest.raises(ai.AiError):
+        ask(runner)
+    [span] = spans.get_finished_spans()
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["jobsearch.outcome"] == "timeout"
+    assert "llm.token_count.prompt" not in span.attributes

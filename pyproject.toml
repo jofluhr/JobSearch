@@ -16,9 +16,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "opentelemetry-sdk>=1.27", "opentelemetry-exporter-otlp-proto-http>=1.27"]
 # Career pages that only show jobs after JavaScript runs. Then: playwright install chromium
 browser = ["playwright>=1.40"]
+# Tracing into a local Phoenix, see TRACING_ENDPOINT in .env.example
+trace = ["opentelemetry-sdk>=1.27", "opentelemetry-exporter-otlp-proto-http>=1.27"]
 
 [project.scripts]
 jobsearch = "jobsearch.cli:main"

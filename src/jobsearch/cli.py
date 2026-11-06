@@ -12,7 +12,7 @@ import time
 from datetime import date, timedelta
 from logging.handlers import RotatingFileHandler
 
-from . import ai, config, db, evaluation, geo, guard, scheduler, usage
+from . import ai, config, db, evaluation, geo, guard, scheduler, tracing, usage
 from .career import ScanCounts, run_career_scan, scan_due
 from .companies import load_target_companies
 from .config import Config, ConfigError
@@ -499,47 +499,55 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = config.load()
         _setup_logging(cfg, args.verbose)
-        if args.command == "init":
-            cmd_init(cfg)
-        elif args.command == "status":
-            cmd_status(cfg)
-        elif args.command in ("daily", "score", "rescore", "career-scan", "report"):
-            # The same lock as the scheduled run, so a manual run never overlaps it.
-            with scheduler.RunLock(cfg.data_dir / "run.lock") as held:
-                if not held:
-                    print("Ein anderer Lauf ist gerade aktiv, bitte später erneut versuchen.", file=sys.stderr)
-                    return 1
-                if args.command == "daily":
-                    return cmd_daily(cfg, score=not args.no_score, career=args.career)
-                if args.command == "career-scan":
-                    return cmd_career_scan(cfg)
-                if args.command == "report":
-                    return cmd_report(cfg, args.dry_run)
-                if args.command == "rescore":
-                    return cmd_rescore(cfg)
-                return cmd_score(cfg, db.connect(cfg.db_path), args.limit)
-        elif args.command == "run":
-            return cmd_run(cfg)
-        elif args.command == "install-task":
-            return cmd_install_task(cfg)
-        elif args.command == "uninstall-task":
-            return cmd_uninstall_task()
-        elif args.command == "career-setup":
-            return cmd_career_setup(cfg, args.recheck)
-        elif args.command == "dashboard":
-            return cmd_dashboard(cfg, args.port, not args.no_browser)
-        elif args.command == "eval":
-            return cmd_eval(cfg, args.changes, args.since, args.until, args.split, args.scores, args.by, args.funnel,
-                            args.usage)
-        elif args.command == "market":
-            return cmd_market(cfg, args.regroup, args.since, args.until)
-        elif args.command == "check-injection":
-            return cmd_check_injection(cfg)
+        tracing.setup(cfg.tracing_endpoint)
+        with tracing.span(f"jobsearch {args.command}"):
+            return _dispatch(cfg, args)
     except ConfigError as e:
         print(f"Konfiguration: {e}", file=sys.stderr)
         if args.command == "run":
             toast("JobSearch", f"Konfiguration: {e}")
         return 2
+    finally:
+        tracing.shutdown()
+
+
+def _dispatch(cfg: Config, args: argparse.Namespace) -> int:
+    if args.command == "init":
+        cmd_init(cfg)
+    elif args.command == "status":
+        cmd_status(cfg)
+    elif args.command in ("daily", "score", "rescore", "career-scan", "report"):
+        # The same lock as the scheduled run, so a manual run never overlaps it.
+        with scheduler.RunLock(cfg.data_dir / "run.lock") as held:
+            if not held:
+                print("Ein anderer Lauf ist gerade aktiv, bitte später erneut versuchen.", file=sys.stderr)
+                return 1
+            if args.command == "daily":
+                return cmd_daily(cfg, score=not args.no_score, career=args.career)
+            if args.command == "career-scan":
+                return cmd_career_scan(cfg)
+            if args.command == "report":
+                return cmd_report(cfg, args.dry_run)
+            if args.command == "rescore":
+                return cmd_rescore(cfg)
+            return cmd_score(cfg, db.connect(cfg.db_path), args.limit)
+    elif args.command == "run":
+        return cmd_run(cfg)
+    elif args.command == "install-task":
+        return cmd_install_task(cfg)
+    elif args.command == "uninstall-task":
+        return cmd_uninstall_task()
+    elif args.command == "career-setup":
+        return cmd_career_setup(cfg, args.recheck)
+    elif args.command == "dashboard":
+        return cmd_dashboard(cfg, args.port, not args.no_browser)
+    elif args.command == "eval":
+        return cmd_eval(cfg, args.changes, args.since, args.until, args.split, args.scores, args.by, args.funnel,
+                        args.usage)
+    elif args.command == "market":
+        return cmd_market(cfg, args.regroup, args.since, args.until)
+    elif args.command == "check-injection":
+        return cmd_check_injection(cfg)
     return 0
 
 

@@ -46,6 +46,7 @@ class Config:
     model_extraction: str = "haiku"
     career_scan_interval_days: int = 7
     report_interval_days: int = 7
+    tracing_endpoint: str = ""  # empty: tracing off
 
     def require_home(self) -> None:
         """The home location has no default, since it is personal. Fail clearly when it is not set."""
@@ -152,6 +153,7 @@ def load(root: Path | None = None) -> Config:
         model_extraction=os.environ.get("MODEL_EXTRACTION", "").strip() or "haiku",
         career_scan_interval_days=_int("CAREER_SCAN_INTERVAL_DAYS", 7),
         report_interval_days=_int("REPORT_INTERVAL_DAYS", 7),
+        tracing_endpoint=os.environ.get("TRACING_ENDPOINT", "").strip(),
     )
 
 
