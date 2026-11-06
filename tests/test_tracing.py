@@ -84,3 +84,31 @@ def test_failed_export_is_logged_as_warning_at_most(spans, caplog):
 
     logging.getLogger(tracing.EXPORT_LOGGERS[0]).error("Failed to export spans batch")
     assert [r.levelname for r in caplog.records] == ["WARNING"]
+
+
+def test_step_carries_only_the_numbers_it_changed(spans):
+    import dataclasses
+
+    @dataclasses.dataclass
+    class Counts:
+        seen: int = 0
+        kept: int = 2
+        errors: list = dataclasses.field(default_factory=list)
+        error: str | None = None
+        done: bool = False
+
+    counts = Counts()
+    with tracing.step("collect", counts):
+        counts.seen = 5
+        counts.errors.append("Suche 'Beispielberuf': kaputt")
+        counts.error = "Text aus einer Anzeige"
+    (span,) = spans.get_finished_spans()
+    assert dict(span.attributes) == {"jobsearch.seen": 5, "jobsearch.errors": 1}
+
+
+def test_step_is_a_no_op_when_off():
+    class NotADataclass:
+        pass
+
+    with tracing.step("collect", NotADataclass()) as span:
+        span.set({"a": 1})

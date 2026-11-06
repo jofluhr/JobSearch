@@ -120,8 +120,13 @@ def cmd_status(cfg: Config) -> None:
 
 def cmd_score(cfg: Config, conn, limit: int | None = None, warnings: list[str] = ()) -> int:
     """Score, write the Digest, show a toast. Returns 1 if the AI step failed."""
-    counts = run_scoring(conn, cfg, limit)
-    path, report = write_digest(conn, cfg.digests_dir, date.today(), counts, warnings)
+    with tracing.span("scoring") as span:
+        counts = run_scoring(conn, cfg, limit)
+        span.set(tracing.numbers(counts))
+        if counts.error:
+            span.fail("Bewertung fehlgeschlagen")
+    with tracing.span("digest"):
+        path, report = write_digest(conn, cfg.digests_dir, date.today(), counts, warnings)
     print(f"Bewertet: {counts.scored} (davon geringe Evidenz: {counts.low_confidence}, "
           f"aussortiert: {counts.sorted_out}), "
           f"remote bestätigt/abgelehnt: {counts.remote_confirmed}/{counts.remote_rejected}, "
@@ -165,11 +170,16 @@ def career_summary(counts: ScanCounts) -> str:
 def career_scan(cfg: Config, conn, rules: Rules, targets) -> list[str]:
     """Run the Career scan, print a summary, return warnings for the Digest."""
     gazetteer = geo.Gazetteer.load(cfg.geo_path, (cfg.home_lat, cfg.home_lon))
-    try:
-        counts = run_career_scan(conn, cfg, targets, rules, gazetteer=gazetteer)
-    except Exception as e:  # the Daily run's own Jobs must still be scored and the Digest written
-        log.exception("Career scan failed")
-        return [f"Karriereseiten-Scan abgebrochen: {e}"]
+    with tracing.span("career scan") as span:
+        try:
+            counts = run_career_scan(conn, cfg, targets, rules, gazetteer=gazetteer)
+        except Exception as e:  # the Daily run's own Jobs must still be scored and the Digest written
+            log.exception("Career scan failed")
+            span.fail("Karriereseiten-Scan abgebrochen")
+            return [f"Karriereseiten-Scan abgebrochen: {e}"]
+        span.set(tracing.numbers(counts))
+        if counts.error:
+            span.fail("Karriereseiten nicht ausgelesen")
     print(career_summary(counts))
     warnings = list(counts.warnings)
     if counts.error:
@@ -181,6 +191,13 @@ def career_scan(cfg: Config, conn, rules: Rules, targets) -> list[str]:
 
 def terms_for_run(cfg: Config, conn, ask=ai.ask) -> tuple[list[str], list[str]]:
     """The Search terms for this run, after deriving new ones if the Profile changed, and warnings."""
+    with tracing.span("search terms") as span:
+        terms, warnings = _terms_for_run(cfg, conn, ask)
+        span.set({"jobsearch.search_terms": len(terms), "jobsearch.warnings": len(warnings)})
+    return terms, warnings
+
+
+def _terms_for_run(cfg: Config, conn, ask) -> tuple[list[str], list[str]]:
     warnings = []
     manual = config.read_list_file(cfg.search_terms_path)
     derived = derived_terms(conn)
@@ -244,12 +261,16 @@ def weekly_report(cfg: Config, conn, ask=ai.ask) -> None:
 
     if not report.report_due(conn, date.today(), cfg.report_interval_days):
         return
-    try:
-        result = report.make_report(conn, cfg, date.today(), ask=ask)
-        error = result.error
-    except Exception as e:  # the collected Jobs and the Digest matter more than the report
-        log.exception("Weekly report failed")
-        error = str(e)
+    with tracing.span("weekly report") as span:
+        try:
+            result = report.make_report(conn, cfg, date.today(), ask=ask)
+            error = result.error
+            span.set(tracing.numbers(result.counts))
+        except Exception as e:  # the collected Jobs and the Digest matter more than the report
+            log.exception("Weekly report failed")
+            error = str(e)
+        if error:
+            span.fail("Wochenbericht fehlgeschlagen")
     if error:
         print(f"Wochenbericht fehlgeschlagen, der nächste Lauf versucht es erneut: {error}", file=sys.stderr)
         return

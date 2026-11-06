@@ -126,6 +126,10 @@ _Avoid_: Cost, quota. In German output it is "KI-Verbrauch".
 The list price the same calls would cost through the API. The AI runs on the subscription, so it is neither a real cost nor a share of the quota.
 _Avoid_: Cost, price. In German output it is "API-Gegenwert".
 
+**Trace**:
+The recorded steps of one command, with their durations and counts, and the prompts and answers of its AI calls, viewed in a local Phoenix. Optional, off unless `TRACING_ENDPOINT` is set. Not a record of AI usage; that is the `ai_calls` table.
+_Avoid_: Log (the log file is something else).
+
 **Weekly report**:
 The weekly AI reading of the pipeline's own metrics, with a short assessment and up to five Recommendations. Every number in it comes from the database; the AI only cites metric IDs.
 _Avoid_: Analysis, summary. In German output it is "Wochenbericht".

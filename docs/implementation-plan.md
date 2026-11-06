@@ -115,6 +115,7 @@ How JobSearch gets built. The domain language is in [CONTEXT.md](../CONTEXT.md) 
   - `localhost` costs about 2 seconds per connection on Windows, since Phoenix listens on IPv4 only and the IPv6 attempt is tried first. With `127.0.0.1` tracing adds about half a second to a short command, mostly loading OpenTelemetry. `.env.example` names `127.0.0.1`.
   - With nothing listening, a command still finishes and takes a few seconds longer. OpenTelemetry reports the lost spans at ERROR; `tracing.py` lowers those loggers to WARNING.
   - Phoenix's REST API returns the span kind as its own field `span_kind`, not among the attributes.
+- **Tracing Part 2 built** (2026-11-06). The Daily run's steps are spans (`search terms`, `daily run` with `collect`, `store postings`, `alert mails`, `full text lookup`, `missing descriptions`, `settle remote jobs`, then `career scan`, `scoring`, `digest`, `weekly report`), each with the counts it changed. Live check with `daily --no-score --career off` (no AI call): the trace showed every step with its duration; fetching missing descriptions took the largest share, collecting the next. A full Daily run with its scoring call under `scoring` is still to be seen; set `TRACING_ENDPOINT` in `.env` and keep Phoenix running for the next run.
 - Phase 0 is the user's job: IMAP access + `verarbeitet` folder, and Indeed alerts (sample mails needed for Phase 5).
 
 ## Verified facts (2026-10-15)

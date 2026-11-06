@@ -136,6 +136,16 @@ The career scan reads `private/companies.csv`. `career-setup` fills in missing c
 
 `install-task` registers a Windows Task Scheduler task for the current user. It starts `jobsearch run` without a console window, which does the Daily run at most once per day, catches up missed days, and shows problems as a toast. Logs are in `data/logs/`.
 
+### Tracing (optional)
+
+To follow a run step by step, the commands can send traces to a local [Phoenix](https://github.com/Arize-ai/phoenix). Each command becomes one trace: its steps with their durations and counts, and every `claude -p` call with its system prompt, prompt, answer, model and tokens.
+
+1. `pip install -e ".[trace]"` (the OpenTelemetry packages; Phoenix itself is not a dependency).
+2. Start Phoenix on its own, outside this venv, for example `uvx arize-phoenix serve` or `pipx run arize-phoenix serve`.
+3. Set `TRACING_ENDPOINT=http://127.0.0.1:6006/v1/traces` in `.env` and open `http://127.0.0.1:6006`. The traces are in the project `jobsearch`.
+
+Use `127.0.0.1`, not `localhost`: on Windows each connection to `localhost` first waits about 2 seconds for IPv6, where Phoenix does not listen. Traces hold the Profile and job ads, so only addresses on this machine are accepted. A run with Phoenix stopped still finishes, a few seconds slower, with a warning; a scheduled run is only traced while Phoenix runs. Leave Phoenix's playground and evals alone, they call model APIs with an API key. The `ai_calls` table stays the record of AI usage; traces are for looking at single runs.
+
 ## How Eligibility works
 
 - Distances are straight-line from home. Within `RADIUS_KM` is in reach, and within `RADIUS_TARGET_COMPANY_KM` for Target companies.

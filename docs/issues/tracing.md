@@ -1,6 +1,6 @@
 # Issue: Trace runs and AI calls in a local Phoenix
 
-Status: Part 1 built (2026-11-06). Implement on branch `implement-tracing`.
+Status: Part 1 and 2 built (2026-11-06); the full "Done when" waits for a Daily run that scores. Implement on branch `implement-tracing`.
 
 ## Goal
 
@@ -55,7 +55,7 @@ Tracing is off by default. It makes no AI calls of its own and adds no migration
 ## Part 2: Spans for the run's steps
 
 - Spans around the steps of a Daily run, nested under the command's root span:
-  - `cmd_daily`: `search terms`, `daily run`, `career scan`, `scoring`, `weekly report`;
+  - `cmd_daily`: `search terms`, `daily run`, `career scan`, `scoring`, `weekly report`; (Changed during implementation: the spans sit inside `terms_for_run`, `run_daily`, `career_scan`, `cmd_score` and `weekly_report`, so `score` and `career-scan` get them too, and writing the Digest has its own span `digest`.)
   - `run_daily`: `collect`, `store postings`, `alert mails`, `full text lookup`, `missing descriptions`, `settle remote jobs`;
   - each span carries the counts it changed (from `Counts`, `ScanCounts` and the scoring result) as `jobsearch.*` attributes, and the run id where there is one.
 - The other commands that call the AI (`score`, `rescore`, `career-setup`, `career-scan`, `report`, `market`, `check-injection`) get their root span from Part 1; inner spans only where a step takes noticeable time.

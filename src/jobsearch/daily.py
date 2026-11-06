@@ -19,7 +19,7 @@ from datetime import date, timedelta
 
 import requests
 
-from . import db, prompts
+from . import db, prompts, tracing
 from .companies import TargetCompany, match_target_company, normalize_company
 from .config import Config, ConfigError
 from .eligibility import (HOMEOFFICE_REASON, Rules, decide, distance_km, remote_by_alert_filter,
@@ -371,24 +371,34 @@ def run_daily(
     today = today or date.today()
     counts = Counts()
     run_id = db.start_run(conn, "daily", settings_snapshot(cfg, targets, rules, terms, mailbox is not None))
-    try:
-        window = remote_window_days(conn, today, cfg.remote_max_window_days)
-        log.info("Daily run: %d Search terms, remote window %d days", len(terms), window)
-        found, found_by = collect(client, cfg, terms, window, counts)
-        counts.postings_seen = len(found)
-        index = JobIndex.load(conn)
-        with conn:
-            store_postings(conn, found.values(), cfg, targets, rules, index, today, counts)
-            record_terms(conn, found_by)
-        if mailbox is not None:
-            collect_mail(conn, mailbox, cfg, targets, rules, index, today, counts)
-            lookup_full_text(conn, client, cfg, targets, rules, today, counts)
-        fetch_missing_descriptions(conn, client, counts)
-        settle_remote_jobs(conn, counts)
-    except Exception as e:
-        db.finish_run(conn, run_id, False, json.dumps(counts.__dict__, ensure_ascii=False), repr(e))
-        raise
-    ok = not counts.errors
-    db.finish_run(conn, run_id, ok, json.dumps(counts.__dict__, ensure_ascii=False),
-                  "; ".join(counts.errors) or None)
+    with tracing.step("daily run", counts) as span:
+        span.set({"jobsearch.run_id": run_id, "jobsearch.search_terms": len(terms)})
+        try:
+            window = remote_window_days(conn, today, cfg.remote_max_window_days)
+            log.info("Daily run: %d Search terms, remote window %d days", len(terms), window)
+            with tracing.step("collect", counts) as step:
+                step.set({"jobsearch.remote_window_days": window})
+                found, found_by = collect(client, cfg, terms, window, counts)
+                counts.postings_seen = len(found)
+            index = JobIndex.load(conn)
+            with tracing.step("store postings", counts), conn:
+                store_postings(conn, found.values(), cfg, targets, rules, index, today, counts)
+                record_terms(conn, found_by)
+            if mailbox is not None:
+                with tracing.step("alert mails", counts):
+                    collect_mail(conn, mailbox, cfg, targets, rules, index, today, counts)
+                with tracing.step("full text lookup", counts):
+                    lookup_full_text(conn, client, cfg, targets, rules, today, counts)
+            with tracing.step("missing descriptions", counts):
+                fetch_missing_descriptions(conn, client, counts)
+            with tracing.step("settle remote jobs", counts):
+                settle_remote_jobs(conn, counts)
+        except Exception as e:
+            db.finish_run(conn, run_id, False, json.dumps(counts.__dict__, ensure_ascii=False), repr(e))
+            raise
+        ok = not counts.errors
+        db.finish_run(conn, run_id, ok, json.dumps(counts.__dict__, ensure_ascii=False),
+                      "; ".join(counts.errors) or None)
+        if not ok:
+            span.fail(f"{len(counts.errors)} Fehler beim Sammeln")
     return counts

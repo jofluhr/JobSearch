@@ -10,6 +10,7 @@ and an unreachable Phoenix only loses the spans.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -116,6 +117,33 @@ def span(name: str, attributes: dict | None = None) -> Iterator[Span]:
         wrapped = Span(otel_span)
         wrapped.set(attributes or {})
         yield wrapped
+
+
+def numbers(counts) -> dict:
+    """The numbers of a counts dataclass as span attributes. A list counts its entries; text is left out,
+    so no Third-party text reaches a step's attributes."""
+    attributes = {}
+    for f in dataclasses.fields(counts):
+        value = getattr(counts, f.name)
+        if isinstance(value, list):
+            value = len(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            attributes[f"jobsearch.{f.name}"] = value
+    return attributes
+
+
+@contextmanager
+def step(name: str, counts) -> Iterator[Span]:
+    """A span around one step of a run, carrying the numbers of `counts` the step changed."""
+    if _tracer is None:
+        yield Span()
+        return
+    before = numbers(counts)
+    with span(name) as current:
+        try:
+            yield current
+        finally:
+            current.set({k: v for k, v in numbers(counts).items() if v != before.get(k)})
 
 
 def shutdown() -> None:

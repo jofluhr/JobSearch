@@ -4,9 +4,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from opentelemetry.trace import StatusCode
 
 from jobsearch.career import ScanCounts
-from jobsearch import ai, db, usage
+from jobsearch import ai, db, tracing, usage
 from jobsearch.cli import career_summary, cmd_daily, cmd_status
 from jobsearch.config import ConfigError
 from tests.conftest import TERMS, TermsAi, add_job
@@ -166,3 +167,74 @@ def test_daily_run_prints_the_full_text_lookup_in_german(cfg, capsys, monkeypatc
 def test_daily_run_without_lookups_prints_no_lookup_line(cfg, capsys):
     cmd_daily(cfg, score=False, career="off", client=RecordingClient(), ask=TermsAi())
     assert "Volltext gesucht" not in capsys.readouterr().out
+
+
+@pytest.fixture
+def spans():
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    tracing.setup("http://127.0.0.1:6006/v1/traces", exporter=exporter)
+    yield exporter
+    tracing.shutdown()
+
+
+class TracedAi(DailyAi):
+    """Opens a span per call like ai.ask, so the test sees where AI calls land in the tree."""
+
+    def __call__(self, prompt, *, purpose, **kwargs):
+        with tracing.span(f"claude -p {purpose}"):
+            return super().__call__(prompt, purpose=purpose, **kwargs)
+
+
+def tree(spans) -> dict[str, str | None]:
+    """Span name -> its parent's name."""
+    finished = spans.get_finished_spans()
+    names = {s.context.span_id: s.name for s in finished}
+    return {s.name: names.get(s.parent.span_id) if s.parent else None for s in finished}
+
+
+def test_daily_run_traces_its_steps_and_ai_calls(cfg, toasts, spans):
+    with tracing.span("jobsearch daily"):
+        cmd_daily(cfg, score=True, career="off", client=RecordingClient(), ask=TracedAi())
+    assert tree(spans) == {
+        "jobsearch daily": None,
+        "search terms": "jobsearch daily",
+        "claude -p search_terms": "search terms",
+        "daily run": "jobsearch daily",
+        "collect": "daily run",
+        "store postings": "daily run",
+        "missing descriptions": "daily run",
+        "settle remote jobs": "daily run",
+        "scoring": "jobsearch daily",
+        "digest": "jobsearch daily",
+        "weekly report": "jobsearch daily",
+        "claude -p weekly_report": "weekly report",
+    }
+    daily = next(s for s in spans.get_finished_spans() if s.name == "daily run")
+    assert daily.attributes["jobsearch.run_id"] > 0
+    assert daily.attributes["jobsearch.search_terms"] == len(TERMS)
+
+
+class FailingClient(RecordingClient):
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    def search(self, term, **kwargs):
+        raise self.error
+
+
+def test_collect_errors_mark_the_daily_run_failed(cfg, spans):
+    cmd_daily(cfg, score=False, career="off", client=FailingClient(ValueError("kaputt")), ask=TermsAi())
+    finished = {s.name: s for s in spans.get_finished_spans()}
+    assert finished["daily run"].status.status_code == StatusCode.ERROR
+    assert finished["collect"].attributes["jobsearch.errors"] == len(TERMS)
+
+
+def test_a_step_that_raises_ends_its_span_failed(cfg, spans):
+    with pytest.raises(RuntimeError):
+        cmd_daily(cfg, score=False, career="off", client=FailingClient(RuntimeError("kaputt")), ask=TermsAi())
+    finished = {s.name: s for s in spans.get_finished_spans()}
+    assert finished["collect"].status.status_code == StatusCode.ERROR
+    assert finished["daily run"].status.status_code == StatusCode.ERROR
