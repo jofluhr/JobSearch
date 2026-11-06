@@ -21,6 +21,19 @@ def fixture_json(name: str) -> dict:
 
 
 @pytest.fixture
+def spans():
+    """Tracing on, into an in-memory exporter; yields the exporter."""
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from jobsearch import tracing
+
+    exporter = InMemorySpanExporter()
+    assert tracing.setup("http://127.0.0.1:6006/v1/traces", exporter=exporter)
+    yield exporter
+    tracing.shutdown()
+
+
+@pytest.fixture
 def conn():
     connection = db.connect(":memory:")
     yield connection

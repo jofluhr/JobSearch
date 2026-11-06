@@ -5,7 +5,11 @@ span is a no-op, so runs, tests and the scheduled task behave as without tracing
 
 Spans carry the prompts of the AI calls, which hold the Profile and Third-party text, so the
 endpoint must be on this machine. Tracing never fails a run: export happens in the background,
-and an unreachable Phoenix only loses the spans.
+an unreachable Phoenix only loses the spans, and any error inside OpenTelemetry turns the span
+(or, at setup, tracing as a whole) into a no-op with a warning.
+
+A failed step records only the exception's type, not its message: messages such as a requests
+error carry URLs from job ads and career pages. The AI call spans carry their text on purpose.
 """
 
 from __future__ import annotations
@@ -52,23 +56,29 @@ class Span:
         """Adds the attributes, skipping None values, which OpenTelemetry does not accept."""
         if self._span is None:
             return
-        for key, value in attributes.items():
-            if value is not None:
-                self._span.set_attribute(key, value)
+        try:
+            for key, value in attributes.items():
+                if value is not None:
+                    self._span.set_attribute(key, value)
+        except Exception:
+            log.warning("Tracing: could not set span attributes", exc_info=True)
 
     def fail(self, message: str) -> None:
         """Marks the span as failed without an exception, e.g. for an answer that was asked for again."""
         if self._span is None:
             return
-        from opentelemetry.trace import Status, StatusCode
+        try:
+            from opentelemetry.trace import Status, StatusCode
 
-        self._span.set_status(Status(StatusCode.ERROR, message))
+            self._span.set_status(Status(StatusCode.ERROR, message))
+        except Exception:
+            log.warning("Tracing: could not mark span failed", exc_info=True)
 
 
 def check_local(endpoint: str) -> None:
     parts = urlsplit(endpoint)
     if parts.scheme not in ("http", "https") or parts.hostname not in LOCAL_HOSTS:
-        raise ConfigError(f"TRACING_ENDPOINT muss auf diesen Rechner zeigen (localhost), nicht auf {endpoint!r}. "
+        raise ConfigError(f"TRACING_ENDPOINT muss auf diesen Rechner zeigen (127.0.0.1), nicht auf {endpoint!r}. "
                           "Die Traces enthalten das Profil und Stellenanzeigen.")
 
 
@@ -82,12 +92,25 @@ def setup(endpoint: str, exporter=None) -> bool:
         return False
     check_local(endpoint)
     try:
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+        provider = _provider_for(endpoint, exporter)
+        tracer = provider.get_tracer(PROJECT)
     except ImportError:
-        log.warning("Tracing ist aus: OpenTelemetry fehlt. Installieren mit: pip install -e \".[trace]\"")
+        log.warning('Tracing off: OpenTelemetry is missing. Install it with: pip install -e ".[trace]"')
         return False
+    except Exception:  # tracing must never cost the run
+        log.warning("Tracing off: could not be set up", exc_info=True)
+        return False
+    # Kept to this module instead of set globally, so setup can run again (tests) and nothing
+    # else in the process picks the provider up.
+    _provider, _tracer = provider, tracer
+    return True
+
+
+def _provider_for(endpoint: str, exporter):
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
     provider = TracerProvider(resource=Resource.create({"service.name": PROJECT,
                                                         "openinference.project.name": PROJECT}))
     for name in EXPORT_LOGGERS:  # filters act only on the logger a record starts at, not on its parents
@@ -101,22 +124,49 @@ def setup(endpoint: str, exporter=None) -> bool:
             OTLPSpanExporter(endpoint=endpoint, timeout=EXPORT_TIMEOUT_SECONDS)))
     else:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-    # Kept to this module instead of set globally, so setup can run again (tests) and nothing
-    # else in the process picks the provider up.
-    _provider, _tracer = provider, provider.get_tracer(PROJECT)
-    return True
+    return provider
+
+
+def _start(name: str):
+    """A started span made current, with the token to detach it, or None if OpenTelemetry fails."""
+    try:
+        from opentelemetry import context, trace
+
+        otel_span = _tracer.start_span(name)
+        return otel_span, context.attach(trace.set_span_in_context(otel_span))
+    except Exception:
+        log.warning("Tracing: could not start span %r", name, exc_info=True)
+        return None
+
+
+def _end(otel_span, token) -> None:
+    try:
+        from opentelemetry import context
+
+        context.detach(token)
+        otel_span.end()
+    except Exception:
+        log.warning("Tracing: could not end span", exc_info=True)
 
 
 @contextmanager
 def span(name: str, attributes: dict | None = None) -> Iterator[Span]:
-    """A span around the block, nested in the current one. An exception marks it failed and propagates."""
-    if _tracer is None:
+    """A span around the block, nested in the current one. An exception marks it failed with the
+    exception's type and propagates."""
+    started = _start(name) if _tracer is not None else None
+    if started is None:
         yield Span()
         return
-    with _tracer.start_as_current_span(name, record_exception=True, set_status_on_exception=True) as otel_span:
-        wrapped = Span(otel_span)
-        wrapped.set(attributes or {})
+    otel_span, token = started
+    wrapped = Span(otel_span)
+    wrapped.set(attributes or {})
+    try:
         yield wrapped
+    except BaseException as e:
+        wrapped.fail(type(e).__name__)
+        raise
+    finally:
+        _end(otel_span, token)
 
 
 def numbers(counts) -> dict:

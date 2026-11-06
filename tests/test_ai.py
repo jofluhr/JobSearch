@@ -160,16 +160,6 @@ def test_usage_falls_back_to_the_call_wide_fields_without_model_usage():
     assert (u.web_search_requests, u.thinking_tokens, u.cost_usd) == (1, None, 0.02)
 
 
-@pytest.fixture
-def spans():
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-    exporter = InMemorySpanExporter()
-    tracing.setup("http://localhost:6006/v1/traces", exporter=exporter)
-    yield exporter
-    tracing.shutdown()
-
-
 def test_traces_a_successful_call(spans):
     ask(FakeRunner((envelope({"ok": True}, usage=USAGE), 0, "")))
     [span] = spans.get_finished_spans()
@@ -183,7 +173,7 @@ def test_traces_a_successful_call(spans):
     assert (a["llm.token_count.prompt"], a["llm.token_count.completion"], a["llm.token_count.total"]) == (
         12 + 900 + 1600, 340, 12 + 900 + 1600 + 340)
     assert (a["jobsearch.outcome"], a["jobsearch.attempt"], a["jobsearch.cost_usd"]) == ("ok", 1, 0.0123)
-    assert "claude" not in json.loads(a["llm.invocation_parameters"])[0]  # no executable path
+    assert json.loads(a["llm.invocation_parameters"]) == {"model": "sonnet", "tools": [], "output_format": "json"}
 
 
 def test_traces_each_attempt_of_a_retry(spans):
@@ -217,3 +207,11 @@ def test_traces_a_timeout(spans):
     assert span.status.status_code == StatusCode.ERROR
     assert span.attributes["jobsearch.outcome"] == "timeout"
     assert "llm.token_count.prompt" not in span.attributes
+
+
+def test_a_broken_tracer_does_not_cost_the_answer(monkeypatch):
+    class BrokenTracer:
+        def start_span(self, name):
+            raise RuntimeError("kaputt")
+    monkeypatch.setattr(tracing, "_tracer", BrokenTracer())
+    assert ask(FakeRunner((envelope({"ok": True}), 0, ""))).data == {"ok": True}

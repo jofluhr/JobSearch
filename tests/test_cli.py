@@ -7,10 +7,10 @@ import pytest
 from opentelemetry.trace import StatusCode
 
 from jobsearch.career import ScanCounts
-from jobsearch import ai, db, tracing, usage
+from jobsearch import ai, db, scoring, tracing, usage
 from jobsearch.cli import career_summary, cmd_daily, cmd_status
 from jobsearch.config import ConfigError
-from tests.conftest import TERMS, TermsAi, add_job
+from tests.conftest import TERMS, FakeAi, TermsAi, add_job
 
 EXAMPLES = Path(__file__).parent.parent / "private.example"
 
@@ -169,22 +169,15 @@ def test_daily_run_without_lookups_prints_no_lookup_line(cfg, capsys):
     assert "Volltext gesucht" not in capsys.readouterr().out
 
 
-@pytest.fixture
-def spans():
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+class Traced:
+    """Wraps a fake ask and opens a span per call like ai.ask, so a test sees where AI calls land."""
 
-    exporter = InMemorySpanExporter()
-    tracing.setup("http://127.0.0.1:6006/v1/traces", exporter=exporter)
-    yield exporter
-    tracing.shutdown()
-
-
-class TracedAi(DailyAi):
-    """Opens a span per call like ai.ask, so the test sees where AI calls land in the tree."""
+    def __init__(self, inner):
+        self.inner = inner
 
     def __call__(self, prompt, *, purpose, **kwargs):
         with tracing.span(f"claude -p {purpose}"):
-            return super().__call__(prompt, purpose=purpose, **kwargs)
+            return self.inner(prompt, purpose=purpose, **kwargs)
 
 
 def tree(spans) -> dict[str, str | None]:
@@ -194,9 +187,13 @@ def tree(spans) -> dict[str, str | None]:
     return {s.name: names.get(s.parent.span_id) if s.parent else None for s in finished}
 
 
-def test_daily_run_traces_its_steps_and_ai_calls(cfg, toasts, spans):
+def test_daily_run_traces_its_steps_and_ai_calls(cfg, toasts, spans, monkeypatch):
+    add_job(db.connect(cfg.db_path), "Projektleiter")  # one unscored Job, so scoring calls the AI
+    scoring_ai = Traced(FakeAi())
+    monkeypatch.setattr("jobsearch.cli.run_scoring",
+                        lambda conn, cfg, limit: scoring.run_scoring(conn, cfg, limit, ask=scoring_ai))
     with tracing.span("jobsearch daily"):
-        cmd_daily(cfg, score=True, career="off", client=RecordingClient(), ask=TracedAi())
+        cmd_daily(cfg, score=True, career="off", client=RecordingClient(), ask=Traced(DailyAi()))
     assert tree(spans) == {
         "jobsearch daily": None,
         "search terms": "jobsearch daily",
@@ -207,6 +204,7 @@ def test_daily_run_traces_its_steps_and_ai_calls(cfg, toasts, spans):
         "missing descriptions": "daily run",
         "settle remote jobs": "daily run",
         "scoring": "jobsearch daily",
+        "claude -p scoring": "scoring",
         "digest": "jobsearch daily",
         "weekly report": "jobsearch daily",
         "claude -p weekly_report": "weekly report",

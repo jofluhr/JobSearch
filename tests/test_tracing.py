@@ -2,21 +2,12 @@ import subprocess
 import sys
 
 import pytest
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
 from jobsearch import tracing
 from jobsearch.config import ConfigError
 
-ENDPOINT = "http://localhost:6006/v1/traces"
-
-
-@pytest.fixture
-def spans():
-    exporter = InMemorySpanExporter()
-    assert tracing.setup(ENDPOINT, exporter=exporter)
-    yield exporter
-    tracing.shutdown()
+ENDPOINT = "http://127.0.0.1:6006/v1/traces"
 
 
 def test_off_without_endpoint():
@@ -36,11 +27,11 @@ def test_off_imports_nothing_from_opentelemetry():
 @pytest.mark.parametrize("endpoint", ["http://example.org:6006/v1/traces", "http://10.0.0.5:6006/v1/traces",
                                       "localhost:6006", "ftp://localhost/v1/traces"])
 def test_non_local_endpoint_is_refused(endpoint):
-    with pytest.raises(ConfigError, match="localhost"):
+    with pytest.raises(ConfigError, match="127.0.0.1"):
         tracing.setup(endpoint)
 
 
-@pytest.mark.parametrize("endpoint", [ENDPOINT, "http://127.0.0.1:6006/v1/traces", "http://[::1]:6006/v1/traces"])
+@pytest.mark.parametrize("endpoint", [ENDPOINT, "http://localhost:6006/v1/traces", "http://[::1]:6006/v1/traces"])
 def test_local_endpoints_are_accepted(endpoint):
     tracing.check_local(endpoint)
 
@@ -55,13 +46,13 @@ def test_spans_nest_and_carry_project(spans):
     assert outer.resource.attributes["openinference.project.name"] == "jobsearch"
 
 
-def test_exception_marks_span_and_propagates(spans):
+def test_exception_marks_span_with_its_type_only_and_propagates(spans):
     with pytest.raises(ValueError):
         with tracing.span("step"):
-            raise ValueError("kaputt")
+            raise ValueError("https://jobs.example.com/anzeige/123 nicht erreichbar")
     (span,) = spans.get_finished_spans()
-    assert span.status.status_code == StatusCode.ERROR
-    assert span.events[0].name == "exception"
+    assert (span.status.status_code, span.status.description) == (StatusCode.ERROR, "ValueError")
+    assert span.events == ()  # the message could carry a URL from a job ad
 
 
 def test_fail_marks_span_without_exception(spans):
@@ -112,3 +103,42 @@ def test_step_is_a_no_op_when_off():
 
     with tracing.step("collect", NotADataclass()) as span:
         span.set({"a": 1})
+
+
+@pytest.mark.parametrize("error", [ImportError("no exporter"), RuntimeError("kaputt")])
+def test_a_failing_setup_turns_tracing_off(monkeypatch, caplog, error):
+    def broken(endpoint, exporter):
+        raise error
+    monkeypatch.setattr(tracing, "_provider_for", broken)
+    assert not tracing.setup(ENDPOINT)
+    assert "Tracing off" in caplog.text
+    with tracing.span("step"):
+        pass
+
+
+class BrokenTracer:
+    def start_span(self, name):
+        raise RuntimeError("kaputt")
+
+
+class BrokenSpan:
+    def set_attribute(self, key, value):
+        raise RuntimeError("kaputt")
+
+    def set_status(self, status):
+        raise RuntimeError("kaputt")
+
+
+def test_a_span_that_cannot_start_is_a_no_op(monkeypatch, caplog):
+    monkeypatch.setattr(tracing, "_tracer", BrokenTracer())
+    with tracing.span("step", {"a": 1}) as span:
+        span.set({"b": 2})
+        ran = True
+    assert ran and "could not start span" in caplog.text
+
+
+def test_a_span_that_fails_on_attributes_does_not_cost_the_block(caplog):
+    span = tracing.Span(BrokenSpan())
+    span.set({"a": 1})
+    span.fail("unbrauchbar")
+    assert "could not set span attributes" in caplog.text

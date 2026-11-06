@@ -109,12 +109,13 @@ def _record(recorder: UsageRecorder | None, usage: CallUsage) -> None:
 
 
 # Attribute names of an AI call span follow OpenInference, so Phoenix shows prompt, answer and tokens.
-def _span_input(cmd: list[str], model: str, system: str, prompt: str, purpose: str, attempt: int) -> dict:
+def _span_input(model: str, tools: tuple[str, ...], system: str, prompt: str, purpose: str, attempt: int) -> dict:
     return {
         "openinference.span.kind": "LLM",
         "llm.provider": "anthropic",
         "llm.model_name": model,
-        "llm.invocation_parameters": json.dumps(cmd[1:]),  # without the executable's path
+        # The settings of the call; system prompt and prompt are in the messages, the schema is left out.
+        "llm.invocation_parameters": json.dumps({"model": model, "tools": list(tools), "output_format": "json"}),
         "llm.input_messages.0.message.role": "system",
         "llm.input_messages.0.message.content": system,
         "llm.input_messages.1.message.role": "user",
@@ -126,11 +127,16 @@ def _span_input(cmd: list[str], model: str, system: str, prompt: str, purpose: s
     }
 
 
+def _sum_known(*counts: int | None) -> int | None:
+    """The sum of the counts that are known, or None if none is."""
+    known = [n for n in counts if n is not None]
+    return sum(known) if known else None
+
+
 def _span_result(usage: CallUsage, output: str | None, mime_type: str) -> dict:
-    counts = (usage.input_tokens, usage.cache_read_tokens, usage.cache_creation_tokens)
-    prompt_tokens = sum(n or 0 for n in counts) if any(n is not None for n in counts) else None
-    total = None if prompt_tokens is None and usage.output_tokens is None \
-        else (prompt_tokens or 0) + (usage.output_tokens or 0)
+    # The prompt includes the cached tokens, as in the ai_calls rows and in Phoenix's view of a call.
+    prompt_tokens = _sum_known(usage.input_tokens, usage.cache_read_tokens, usage.cache_creation_tokens)
+    total = _sum_known(prompt_tokens, usage.output_tokens)
     attributes = {
         "llm.model_name": usage.model,
         "llm.token_count.prompt": prompt_tokens,
@@ -178,7 +184,7 @@ def ask(
     cmd = command(model, schema, system, tools)
     problem = ""
     for attempt in (1, 2):
-        with tracing.span(f"claude -p {purpose}", _span_input(cmd, model, system, prompt, purpose, attempt)) as span:
+        with tracing.span(f"claude -p {purpose}", _span_input(model, tools, system, prompt, purpose, attempt)) as span:
             started_at = datetime.now().isoformat(timespec="seconds")
             usage = dict(purpose=purpose, model=model, attempt=attempt, started_at=started_at)
             try:
